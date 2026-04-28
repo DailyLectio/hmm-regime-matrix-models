@@ -1,0 +1,756 @@
+"""
+RegimeSupervisor_V3D.py — Stage C of the V3D Institutional Regime Matrix
+Merges Stage A (Macro) and Stage B (HMM) classifications into final regime states
+with bot permissions, confidence scoring, and position sizing.
+
+Run modes:
+    --batch     Process full history, write RegimeMatrix_Full.csv
+    --live      Continuous loop, atomic write to RegimeMatrix_Latest.csv
+    --symbol    NQ | ES | BOTH (default: BOTH)
+    --interval  Loop sleep seconds in live mode (default: 30)
+    --shadow    Write with _SHADOW suffix (for testing)
+
+Usage examples:
+    python RegimeSupervisor_V3D.py --batch --symbol BOTH
+    python RegimeSupervisor_V3D.py --live --interval 30
+    python RegimeSupervisor_V3D.py --batch --symbol NQ --shadow
+"""
+
+import argparse
+import logging
+import os
+import sys
+import time
+from datetime import datetime, timedelta
+from typing import Dict, Tuple
+
+import numpy as np
+import pandas as pd
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+BASE_DIR   = r"C:\V3D"   # Junction alias for C:\Users\Valued Customer\NT8_Regimes
+INPUT_DIR  = os.path.join(BASE_DIR, "V3D")
+OUTPUT_DIR = os.path.join(BASE_DIR, "V3D")
+BACKTEST_DIR = os.path.join(BASE_DIR, "Backtest")
+HISTORY_DIR  = os.path.join(OUTPUT_DIR, "History")
+
+# Input files (Stage A and B outputs)
+MACRO_FILES = {
+    "NQ": os.path.join(INPUT_DIR, "NQ_Macro_Regimes_V3D.csv"),
+    "ES": os.path.join(INPUT_DIR, "ES_Macro_Regimes_V3D.csv"),
+}
+HMM_FILES = {
+    "NQ": os.path.join(INPUT_DIR, "NQ_HMM_Regimes_V3D.csv"),
+    "ES": os.path.join(INPUT_DIR, "ES_HMM_Regimes_V3D.csv"),
+}
+
+# Output files
+LATEST_FILES = {
+    "NQ": os.path.join(OUTPUT_DIR, "NQ_RegimeMatrix_Latest.csv"),
+    "ES": os.path.join(OUTPUT_DIR, "ES_RegimeMatrix_Latest.csv"),
+}
+FULL_FILES = {
+    "NQ": os.path.join(BACKTEST_DIR, "NQ_RegimeMatrix_Full.csv"),
+    "ES": os.path.join(BACKTEST_DIR, "ES_RegimeMatrix_Full.csv"),
+}
+HISTORY_FILES = {
+    "NQ": os.path.join(HISTORY_DIR, "NQ_RegimeMatrix_History.csv"),
+    "ES": os.path.join(HISTORY_DIR, "ES_RegimeMatrix_History.csv"),
+}
+
+# ---------------------------------------------------------------------------
+# Regime Classification Thresholds
+# ---------------------------------------------------------------------------
+# Per-symbol thresholds (from Section 4)
+THRESHOLDS = {
+    "NQ": {
+        "velocity_strong": 0.85,
+        "ib_strong": 0.85,
+        "vwap_confirm": 0.40,
+    },
+    "ES": {
+        "velocity_strong": 1.00,
+        "ib_strong": 1.00,
+        "vwap_confirm": 0.50,
+    },
+}
+
+# Phase confidence multipliers (Section 6)
+PHASE_MULTIPLIERS = {
+    "OPENING_AUCTION":        {"trend": 0.70, "rotation": 1.10},
+    "EARLY_TEST":             {"trend": 0.80, "rotation": 1.05},
+    "FIRST_ACCEPTANCE":       {"trend": 0.90, "rotation": 1.00},
+    "PRE_IB_MATURATION":      {"trend": 0.85, "rotation": 1.05},
+    "POST_IB_MACRO":          {"trend": 1.10, "rotation": 0.95},
+    "MID_MORNING_DISCOVERY":  {"trend": 1.00, "rotation": 1.00},
+    "LUNCH_AUCTION":          {"trend": 0.75, "rotation": 1.15},
+    "POST_LUNCH_ROTATION":    {"trend": 0.90, "rotation": 1.00},
+    "AFTERNOON_TREND_TEST":   {"trend": 1.05, "rotation": 0.95},
+    "LATE_DAY_CONVICTION":    {"trend": 0.80, "rotation": 0.90},
+    "CASH_CLOSE":             {"trend": 0.60, "rotation": 0.70},
+}
+
+# Default multiplier for unknown phases
+DEFAULT_MULTIPLIERS = {"trend": 1.00, "rotation": 1.00}
+
+# Conflict threshold for TRANSITION state
+CONFLICT_THRESHOLD = 0.40
+
+# Minimum confidence thresholds for regime classification
+MIN_TREND_EXPANSION_CONFIDENCE = 70
+MIN_TREND_COMPRESSION_CONFIDENCE = 60
+MIN_ROTATION_LIQUID_CONFIDENCE = 55
+
+# State persistence gate
+MIN_STATE_AGE_BARS = 2  # TREND_EXPANSION requires 2+ bars persistence
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+log = logging.getLogger("RegimeSupervisor_V3D")
+
+
+# ===========================================================================
+# KALMAN FILTER — smooths TrendExpansionScore
+# ===========================================================================
+
+class KalmanScoreFilter:
+    """
+    Single-state Kalman filter for smoothing regime confidence scores.
+    Default parameters from Section 6.
+    """
+    def __init__(self, Q: float = 0.05, R: float = 0.15):
+        self.Q = Q  # Process noise
+        self.R = R  # Observation noise
+        self.x = 0.5  # Initial state (neutral)
+        self.P = 1.0  # Initial uncertainty
+
+    def update(self, z: float) -> float:
+        """Update filter with new observation z, return smoothed estimate."""
+        # Prediction
+        P_pred = self.P + self.Q
+        
+        # Update
+        K = P_pred / (P_pred + self.R)
+        self.x = self.x + K * (z - self.x)
+        self.P = (1 - K) * P_pred
+        
+        return self.x
+
+    def reset(self):
+        """Reset filter state (call at session boundaries)."""
+        self.x = 0.5
+        self.P = 1.0
+
+
+# ===========================================================================
+# DATA LOADING
+# ===========================================================================
+
+def load_macro_regimes(symbol: str) -> pd.DataFrame:
+    """Load Stage A macro regime CSV."""
+    path = MACRO_FILES[symbol]
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Macro regimes file not found: {path}")
+    
+    df = pd.read_csv(path)
+    log.info(f"[{symbol}] Loaded macro regimes: {len(df)} rows")
+    return df
+
+
+def load_hmm_regimes(symbol: str) -> pd.DataFrame:
+    """Load Stage B HMM regime CSV."""
+    path = HMM_FILES[symbol]
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"HMM regimes file not found: {path}")
+    
+    df = pd.read_csv(path)
+    log.info(f"[{symbol}] Loaded HMM regimes: {len(df)} rows")
+    return df
+
+
+def merge_stages(macro_df: pd.DataFrame, hmm_df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """
+    Merge Stage A and Stage B on session_key.
+    Returns unified DataFrame with all input columns plus derived metrics.
+    """
+    # Merge on session_key (deterministic join)
+    merged = macro_df.merge(
+        hmm_df,
+        on="session_key",
+        how="inner",
+        suffixes=("_macro", "_hmm")
+    )
+    
+    log.info(f"[{symbol}] Merged {len(merged)} rows (macro {len(macro_df)}, hmm {len(hmm_df)})")
+    
+    # Resolve duplicate columns (prefer macro for shared fields)
+    if "TimestampET_macro" in merged.columns:
+        merged["TimestampET"] = merged["TimestampET_macro"]
+        merged.drop(columns=["TimestampET_macro", "TimestampET_hmm"], inplace=True, errors="ignore")
+    
+    if "Symbol_macro" in merged.columns:
+        merged["Symbol"] = merged["Symbol_macro"]
+        merged.drop(columns=["Symbol_macro", "Symbol_hmm"], inplace=True, errors="ignore")
+    
+    # Sort by timestamp
+    merged["TimestampET"] = pd.to_datetime(merged["TimestampET"])
+    merged.sort_values("TimestampET", inplace=True)
+    merged.reset_index(drop=True, inplace=True)
+    
+    return merged
+
+
+# ===========================================================================
+# SCORING FUNCTIONS
+# ===========================================================================
+
+def compute_trend_expansion_score(row: pd.Series, symbol: str) -> float:
+    """
+    Compute raw TrendExpansionScore from macro + HMM signals.
+    Returns 0-100 score before Kalman smoothing.
+    """
+    thr = THRESHOLDS[symbol]
+    score = 0.0
+    
+    # Component 1: IB breakout confirmed (30 points max)
+    ib_ext = row.get("ib_extension_pct", 0.0)
+    if ib_ext > 0.50:
+        score += 30
+    elif ib_ext > 0.25:
+        score += 20
+    elif ib_ext > 0.10:
+        score += 10
+    
+    # Component 2: Velocity confirmation (25 points max)
+    vel = abs(row.get("velocity_3cp_atr", 0.0))
+    if vel >= thr["velocity_strong"]:
+        score += 25
+    elif vel >= thr["velocity_strong"] * 0.70:
+        score += 15
+    
+    # Component 3: VWAP separation (20 points max)
+    vwap_sep = abs(row.get("close_vs_vwap_atr", 0.0))
+    if vwap_sep >= thr["vwap_confirm"]:
+        score += 20
+    elif vwap_sep >= thr["vwap_confirm"] * 0.60:
+        score += 10
+    
+    # Component 4: HMM directional agreement (15 points max)
+    hmm_regime = row.get("RegimeLabel", "")
+    official_bias = row.get("official_bias_label", "")
+    
+    if hmm_regime in ["TrendUp", "TrendDown"]:
+        if (hmm_regime == "TrendUp" and official_bias == "LONG") or \
+           (hmm_regime == "TrendDown" and official_bias == "SHORT"):
+            score += 15
+        else:
+            score += 5  # Partial credit for HMM trend but wrong direction
+    
+    # Component 5: Directional efficiency (10 points max)
+    de = row.get("de_effective", 0.0)
+    if de >= 0.70:
+        score += 10
+    elif de >= 0.50:
+        score += 5
+    
+    return min(100.0, score)
+
+
+def compute_conflict_score(row: pd.Series) -> float:
+    """
+    Compute ConflictScore: degree of disagreement between macro and HMM.
+    Returns 0.0 (perfect agreement) to 1.0 (maximum conflict).
+    """
+    conflict = 0.0
+    
+    # Conflict 1: Macro says TREND, HMM says Balance (strong conflict)
+    macro_regime = row.get("official_regime_label", "")
+    hmm_regime = row.get("RegimeLabel", "")
+    
+    if macro_regime == "TREND" and hmm_regime == "Balance":
+        conflict += 0.40
+    elif macro_regime == "BALANCE" and hmm_regime in ["TrendUp", "TrendDown"]:
+        conflict += 0.40
+    
+    # Conflict 2: Directional disagreement (moderate conflict)
+    macro_bias = row.get("official_bias_label", "")
+    if macro_regime == "TREND" and hmm_regime in ["TrendUp", "TrendDown"]:
+        if (macro_bias == "LONG" and hmm_regime == "TrendDown") or \
+           (macro_bias == "SHORT" and hmm_regime == "TrendUp"):
+            conflict += 0.30
+    
+    # Conflict 3: Macro ROTATION but low two-sided evidence (minor conflict)
+    if macro_regime == "ROTATION":
+        two_sided = row.get("two_sided_trade_flag", 0)
+        if two_sided == 0:
+            conflict += 0.15
+    
+    # Conflict 4: High HMM flip rate (state instability)
+    flip_rate = row.get("HMM_FlipRate_5bar", 0.0)
+    if flip_rate > 0.60:
+        conflict += 0.15
+    
+    return min(1.0, conflict)
+
+
+def apply_phase_multipliers(
+    trend_score: float,
+    rotation_score: float,
+    phase: str
+) -> Tuple[float, float]:
+    """
+    Apply phase-specific multipliers to regime thresholds.
+    Returns adjusted (trend_threshold, rotation_threshold).
+    """
+    mult = PHASE_MULTIPLIERS.get(phase, DEFAULT_MULTIPLIERS)
+    
+    # Base thresholds
+    trend_base = MIN_TREND_EXPANSION_CONFIDENCE
+    rotation_base = MIN_ROTATION_LIQUID_CONFIDENCE
+    
+    # Apply multipliers (higher multiplier = easier to trigger)
+    trend_threshold = trend_base / mult["trend"]
+    rotation_threshold = rotation_base / mult["rotation"]
+    
+    return trend_threshold, rotation_threshold
+
+
+# ===========================================================================
+# REGIME CLASSIFICATION
+# ===========================================================================
+
+def classify_final_regime(
+    row: pd.Series,
+    kalman_score: float,
+    conflict_score: float,
+    symbol: str,
+    prev_regime: str = None,
+    state_age: int = 0
+) -> Tuple[str, str, int, str]:
+    """
+    Final regime classification with priority chain.
+    
+    Returns: (FinalRegime, FinalDirection, RegimeConfidence, ReasonCode)
+    """
+    # Get phase multipliers
+    phase = row.get("phase", "UNKNOWN")
+    trend_threshold, rotation_threshold = apply_phase_multipliers(
+        kalman_score, 0.0, phase
+    )
+    
+    # Extract key signals
+    macro_regime = row.get("official_regime_label", "")
+    macro_bias = row.get("official_bias_label", "")
+    hmm_regime = row.get("RegimeLabel", "")
+    playbook_state = row.get("playbook_state", "")
+    ib_width_atr = row.get("ib_width_atr", 0.0)
+    two_sided = row.get("two_sided_trade_flag", 0)
+    vel = abs(row.get("velocity_3cp_atr", 0.0))
+    
+    # Determine direction
+    if macro_bias == "LONG" or hmm_regime == "TrendUp":
+        direction = "LONG"
+    elif macro_bias == "SHORT" or hmm_regime == "TrendDown":
+        direction = "SHORT"
+    else:
+        direction = "NEUTRAL"
+    
+    # PRIORITY 1: TRANSITION (danger override)
+    if conflict_score >= CONFLICT_THRESHOLD:
+        return "TRANSITION", "NEUTRAL", 0, "HIGH_CONFLICT"
+    
+    # PRIORITY 2: TREND_EXPANSION
+    if kalman_score >= trend_threshold:
+        if playbook_state == "TREND_STRONG":
+            # Apply state persistence gate
+            if prev_regime == "TREND_EXPANSION" or state_age >= MIN_STATE_AGE_BARS:
+                confidence = int(kalman_score)
+                return "TREND_EXPANSION", direction, confidence, "STRONG_BREAKOUT"
+            else:
+                # Downgrade to compression until persistence confirmed
+                confidence = int(kalman_score * 0.85)
+                return "TREND_COMPRESSION", direction, confidence, "AWAITING_PERSISTENCE"
+        elif macro_regime == "TREND" and hmm_regime in ["TrendUp", "TrendDown"]:
+            confidence = int(kalman_score * 0.90)
+            return "TREND_EXPANSION", direction, confidence, "MACRO_HMM_AGREE"
+    
+    # PRIORITY 3: TREND_COMPRESSION
+    if macro_regime == "TREND" or hmm_regime in ["TrendUp", "TrendDown"]:
+        if kalman_score >= MIN_TREND_COMPRESSION_CONFIDENCE:
+            confidence = int(kalman_score * 0.80)
+            return "TREND_COMPRESSION", direction, confidence, "DIRECTIONAL_MODERATE"
+    
+    # PRIORITY 4: ROTATION_LIQUID
+    if two_sided == 1 and ib_width_atr >= 1.5:
+        if playbook_state in ["ROTATION_LIQUID", "ROTATION_CHOP"]:
+            confidence = max(55, int(70 - conflict_score * 30))
+            return "ROTATION_LIQUID", "NEUTRAL", confidence, "TWO_SIDED_CONFIRMED"
+    
+    # PRIORITY 5: ROTATION_ILLIQUID (default fallback)
+    return "ROTATION_ILLIQUID", "NEUTRAL", 40, "LOW_CONVICTION"
+
+
+# ===========================================================================
+# BOT PERMISSIONS AND SIZING
+# ===========================================================================
+
+def compute_bot_permissions(final_regime: str, conflict_score: float) -> Dict[str, int]:
+    """
+    Map FinalRegime to bot permission flags.
+    Returns dict with Allow{Bot} and {Bot}SizePct keys.
+    """
+    # Base permission table (Section 6)
+    BOT_PERMISSIONS = {
+        "TREND_EXPANSION": {
+            "AllowExpansion": 1, "AllowMomo": 1, "AllowPine": 0,
+            "AllowADX_DI": 0, "AllowSniper": 0,
+        },
+        "TREND_COMPRESSION": {
+            "AllowExpansion": 0, "AllowMomo": 1, "AllowPine": 1,
+            "AllowADX_DI": 0, "AllowSniper": 1,
+        },
+        "ROTATION_LIQUID": {
+            "AllowExpansion": 0, "AllowMomo": 1, "AllowPine": 1,
+            "AllowADX_DI": 1, "AllowSniper": 0,
+        },
+        "ROTATION_ILLIQUID": {
+            "AllowExpansion": 0, "AllowMomo": 0, "AllowPine": 0,
+            "AllowADX_DI": 0, "AllowSniper": 0,
+        },
+        "TRANSITION": {
+            "AllowExpansion": 0, "AllowMomo": 0, "AllowPine": 0,
+            "AllowADX_DI": 0, "AllowSniper": 0,
+        },
+    }
+    
+    perms = BOT_PERMISSIONS.get(final_regime, BOT_PERMISSIONS["TRANSITION"]).copy()
+    
+    # Special case: Pine only in TREND_COMPRESSION if conflict < 0.35
+    if final_regime == "TREND_COMPRESSION" and conflict_score >= 0.35:
+        perms["AllowPine"] = 0
+    
+    return perms
+
+
+def compute_size_pct(regime_confidence: int, conflict_score: float) -> int:
+    """
+    Convert RegimeConfidence to SizePct (0-100).
+    Formula from Section 6.
+    """
+    if conflict_score >= 0.40:
+        return max(25, int(regime_confidence * 0.6))
+    
+    # Linear scaling: confidence 50 → 0%, confidence 95 → 100%
+    size_pct = int(min(100, max(25, (regime_confidence - 50) / 45 * 100)))
+    return size_pct
+
+
+def compute_directional_permissions(
+    final_regime: str,
+    final_direction: str,
+    macro_bias: str,
+    hmm_regime: str
+) -> Dict[str, int]:
+    """
+    Compute AllowLong, AllowShort, AllowFadeLong, AllowFadeShort.
+    """
+    perms = {
+        "AllowLong": 0,
+        "AllowShort": 0,
+        "AllowFadeLong": 0,
+        "AllowFadeShort": 0,
+    }
+    
+    # Trend-following permissions (Expansion, Momentum, Sniper)
+    if final_regime in ["TREND_EXPANSION", "TREND_COMPRESSION"]:
+        if final_direction == "LONG":
+            perms["AllowLong"] = 1
+        elif final_direction == "SHORT":
+            perms["AllowShort"] = 1
+    
+    # Fading permissions (Pine, ADX_DI in rotation)
+    if final_regime == "ROTATION_LIQUID":
+        # Bidirectional fading allowed
+        perms["AllowFadeLong"] = 1
+        perms["AllowFadeShort"] = 1
+        # Also allow trend-following in rotation for Momentum
+        perms["AllowLong"] = 1
+        perms["AllowShort"] = 1
+    
+    return perms
+
+
+# ===========================================================================
+# MAIN PROCESSING
+# ===========================================================================
+
+def process_symbol(
+    symbol: str,
+    mode: str = "batch",
+    shadow: bool = False
+) -> pd.DataFrame:
+    """
+    Main processing pipeline for one symbol.
+    
+    Args:
+        symbol: "NQ" or "ES"
+        mode: "batch" or "live"
+        shadow: If True, write with _SHADOW suffix
+    
+    Returns:
+        DataFrame with full RegimeMatrix output
+    """
+    log.info(f"[{symbol}] Starting {mode} processing...")
+    
+    # Load inputs
+    macro_df = load_macro_regimes(symbol)
+    hmm_df = load_hmm_regimes(symbol)
+    
+    # Merge stages
+    merged = merge_stages(macro_df, hmm_df, symbol)
+    
+    if merged.empty:
+        log.warning(f"[{symbol}] No merged data after join. Check session_key alignment.")
+        return pd.DataFrame()
+    
+    # Initialize Kalman filter (one per session)
+    kalman_filter = KalmanScoreFilter()
+    current_date = None
+    
+    # Track state age for persistence gate
+    prev_regime = None
+    state_age = 0
+    
+    # Output rows
+    output_rows = []
+    
+    for idx, row in merged.iterrows():
+        timestamp = row["TimestampET"]
+        trade_date = pd.to_datetime(row["trade_date"]).date()
+        
+        # Reset Kalman filter at new session
+        if trade_date != current_date:
+            kalman_filter.reset()
+            current_date = trade_date
+            prev_regime = None
+            state_age = 0
+        
+        # Compute scores
+        raw_trend_score = compute_trend_expansion_score(row, symbol)
+        kalman_score = kalman_filter.update(raw_trend_score)
+        conflict_score = compute_conflict_score(row)
+        
+        # Classify final regime
+        final_regime, final_direction, regime_confidence, reason_code = \
+            classify_final_regime(
+                row, kalman_score, conflict_score, symbol,
+                prev_regime, state_age
+            )
+        
+        # Update state age
+        if final_regime == prev_regime:
+            state_age += 1
+        else:
+            state_age = 1
+            prev_regime = final_regime
+        
+        # Compute bot permissions
+        bot_perms = compute_bot_permissions(final_regime, conflict_score)
+        dir_perms = compute_directional_permissions(
+            final_regime, final_direction,
+            row.get("official_bias_label", ""),
+            row.get("RegimeLabel", "")
+        )
+        
+        # Compute sizing
+        size_pct = compute_size_pct(regime_confidence, conflict_score)
+        
+        # Build output row
+        output_row = {
+            # Core identifiers
+            "session_key": row["session_key"],
+            "TimestampET": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+            "Symbol": symbol,
+            
+            # Macro layer
+            "MacroRegime": row.get("official_regime_label", ""),
+            "MacroPlaybook": row.get("playbook_state", ""),
+            "MacroCheckpointState": row.get("checkpoint_state", ""),
+            
+            # HMM layer
+            "HMMRegime": row.get("RegimeLabel", ""),
+            "HMMDirection": "LONG" if row.get("RegimeLabel") == "TrendUp" else
+                           "SHORT" if row.get("RegimeLabel") == "TrendDown" else "NEUTRAL",
+            
+            # Velocity signals
+            "Velocity3P_ATR": round(row.get("velocity_3cp_atr", 0.0), 4),
+            "VelocityConfirmed": 1 if abs(row.get("velocity_3cp_atr", 0.0)) >= 
+                                THRESHOLDS[symbol]["velocity_strong"] else 0,
+            
+            # Scores
+            "TrendExpansionScore": round(raw_trend_score, 2),
+            "KalmanSmoothedScore": round(kalman_score, 2),
+            "ConflictScore": round(conflict_score, 4),
+            
+            # Phase context
+            "Phase": row.get("phase", ""),
+            "PhaseMultiplier": PHASE_MULTIPLIERS.get(
+                row.get("phase", ""), DEFAULT_MULTIPLIERS
+            )["trend"],
+            
+            # Final classification
+            "FinalRegime": final_regime,
+            "FinalDirection": final_direction,
+            "RegimeConfidence": regime_confidence,
+            
+            # Bot permissions (flags)
+            **bot_perms,
+            
+            # Bot sizing percentages
+            "ExpansionSizePct": size_pct if bot_perms["AllowExpansion"] else 0,
+            "MomoSizePct": size_pct if bot_perms["AllowMomo"] else 0,
+            "PineSizePct": size_pct if bot_perms["AllowPine"] else 0,
+            "ADX_DISizePct": size_pct if bot_perms["AllowADX_DI"] else 0,
+            "SniperSizePct": size_pct if bot_perms["AllowSniper"] else 0,
+            
+            # Directional permissions
+            **dir_perms,
+            
+            # Metadata
+            "ReasonCode": reason_code,
+            "StateAgeBars": state_age,
+            "StaleDataFlag": 0,  # Always fresh in batch mode
+        }
+        
+        output_rows.append(output_row)
+    
+    # Build output DataFrame
+    output_df = pd.DataFrame(output_rows)
+    
+    log.info(f"[{symbol}] Processed {len(output_df)} rows")
+    log.info(f"[{symbol}] Regime distribution:\n{output_df['FinalRegime'].value_counts()}")
+    
+    return output_df
+
+
+def write_output(
+    df: pd.DataFrame,
+    symbol: str,
+    mode: str,
+    shadow: bool = False
+):
+    """
+    Write output to appropriate file(s) based on mode.
+    
+    Args:
+        df: Output DataFrame
+        symbol: "NQ" or "ES"
+        mode: "batch" or "live"
+        shadow: If True, write with _SHADOW suffix
+    """
+    if df.empty:
+        log.warning(f"[{symbol}] No data to write.")
+        return
+    
+    suffix = "_SHADOW" if shadow else ""
+    
+    if mode == "batch":
+        # Write full history to Backtest folder
+        os.makedirs(BACKTEST_DIR, exist_ok=True)
+        full_path = FULL_FILES[symbol].replace(".csv", f"{suffix}.csv")
+        df.to_csv(full_path, index=False)
+        log.info(f"[{symbol}] Written full history: {full_path} ({len(df)} rows)")
+        
+        # Also write to History folder for analysis
+        os.makedirs(HISTORY_DIR, exist_ok=True)
+        history_path = HISTORY_FILES[symbol].replace(".csv", f"{suffix}.csv")
+        df.to_csv(history_path, index=False)
+        log.info(f"[{symbol}] Written history copy: {history_path}")
+    
+    elif mode == "live":
+        # Write latest row only (atomic)
+        latest_path = LATEST_FILES[symbol].replace(".csv", f"{suffix}.csv")
+        tmp_path = latest_path + ".tmp"
+        
+        last_row = df.iloc[[-1]]  # Keep as DataFrame (single row)
+        last_row.to_csv(tmp_path, index=False)
+        os.replace(tmp_path, latest_path)
+        
+        log.info(f"[{symbol}] Updated latest: {latest_path}")
+        
+        # Append to history
+        os.makedirs(HISTORY_DIR, exist_ok=True)
+        history_path = HISTORY_FILES[symbol].replace(".csv", f"{suffix}.csv")
+        
+        if os.path.exists(history_path):
+            last_row.to_csv(history_path, mode='a', header=False, index=False)
+        else:
+            last_row.to_csv(history_path, index=False)
+
+
+# ===========================================================================
+# ENTRY POINT
+# ===========================================================================
+
+def parse_args():
+    p = argparse.ArgumentParser(description="RegimeSupervisor V3D — Stage C")
+    mode = p.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--batch", action="store_true",
+                      help="Process full history, write RegimeMatrix_Full.csv")
+    mode.add_argument("--live", action="store_true",
+                      help="Continuous loop, write RegimeMatrix_Latest.csv")
+    p.add_argument("--symbol", choices=["NQ", "ES", "BOTH"], default="BOTH")
+    p.add_argument("--interval", type=int, default=30,
+                   help="Sleep seconds between live cycles (default: 30)")
+    p.add_argument("--shadow", action="store_true",
+                   help="Write with _SHADOW suffix for testing")
+    return p.parse_args()
+
+
+def get_symbols(arg: str) -> list:
+    return ["NQ", "ES"] if arg == "BOTH" else [arg]
+
+
+def main():
+    args = parse_args()
+    symbols = get_symbols(args.symbol)
+    
+    # Create output directories
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(BACKTEST_DIR, exist_ok=True)
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    
+    mode = "batch" if args.batch else "live"
+    
+    if args.batch:
+        log.info("=== RegimeSupervisor V3D — BATCH MODE ===")
+        for sym in symbols:
+            try:
+                df = process_symbol(sym, mode="batch", shadow=args.shadow)
+                write_output(df, sym, mode="batch", shadow=args.shadow)
+            except Exception as e:
+                log.error(f"[{sym}] Batch processing failed: {e}", exc_info=True)
+        log.info("=== Batch complete ===")
+    
+    elif args.live:
+        log.info(f"=== RegimeSupervisor V3D — LIVE MODE (interval={args.interval}s) ===")
+        while True:
+            for sym in symbols:
+                try:
+                    df = process_symbol(sym, mode="live", shadow=args.shadow)
+                    write_output(df, sym, mode="live", shadow=args.shadow)
+                except Exception as e:
+                    log.error(f"[{sym}] Live cycle error: {e}", exc_info=True)
+            time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    main()

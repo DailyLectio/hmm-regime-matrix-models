@@ -1,0 +1,20 @@
+{
+  "NQ_last_fit_rows": 1024655,
+  "NQ_last_fit_ts": "2026-04-28T15:20:34.254691",
+  "NQ_last_ll": 36018.5957,
+  "NQ_label_map": {
+    "2": "TrendUp",
+    "1": "TrendDown",
+    "0": "Balance",
+    "3": "Transition"
+  },
+  "ES_last_fit_rows": 1023056,
+  "ES_last_fit_ts": "2026-04-28T15:20:41.654457",
+  "ES_last_ll": 37171.2476,
+  "ES_label_map": {
+    "1": "TrendUp",
+    "3": "TrendDown",
+    "2": "Balance",
+    "0": "Transition"
+  }
+}

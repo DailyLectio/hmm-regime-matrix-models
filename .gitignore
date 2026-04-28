@@ -1,0 +1,75 @@
+# Local environments and Python cache
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets and local account settings
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.crt
+secrets.*
+credentials.*
+token.*
+
+# Runtime noise
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+*.swp
+Thumbs.db
+desktop.ini
+
+# Generated packages and local browser exports
+*.zip
+*.lnk
+*.html
+*_files/
+
+# Large/generated HMM data surfaces
+/NT8_Regimes/Exports/
+/NT8_Regimes/Incoming/
+/NT8_Regimes/Active/
+/NT8_Regimes/Backtest/
+/NT8_Regimes/Strategy Analyzer/
+/NT8_Regimes/Archive/
+/NT8_Regimes/MacroRegime/data/raw/
+/NT8_Regimes/Stitcher/*.txt
+/NT8_Regimes/V3C/LiveWindow/
+/NT8_Regimes/V3C/Reports/
+/NT8_Regimes/V3D/Logs/
+/NT8_Regimes/V3D/Reports/
+/NT8_Regimes/V3D/TradeLog/
+/NT8_Regimes/V3D/History/Archives/
+/NT8_Regimes/V3D/History/Backup_*/
+/NT8_Regimes/Overrides/HUD_Override_Log.csv
+
+# Common market-data dump names
+*.Last.txt
+*_1min_export.txt
+*_Continuous_*_Last.txt
+*_Continuous_*.Last.txt
+*_Stitched_*.txt
+*_Macro_Regimes*.csv
+*_Regimes_HMM*.csv
+*_Regimes_V3C.csv
+*_HMM_Regimes*.csv
+*_RegimeMatrix_History*.csv
+*_RegimeMatrix_Full*.csv
+Macro_Regimes.csv
+Footprint_Export.csv
+V3C_V3D_*Comparison.csv
+*.parquet
+*.feather
+*.h5
+*.sqlite
+*.db

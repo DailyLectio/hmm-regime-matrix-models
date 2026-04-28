@@ -1,0 +1,437 @@
+# V3D Regime Analysis & Daily Workflow Guide
+
+## Overview
+
+The V3D Regime Analysis suite provides comprehensive statistical analysis of regime behavior across the full 750-day history and generates daily pre-market reports.
+
+---
+
+## Files Delivered
+
+1. **V3D_Regime_Analysis.py** — Main analysis script
+2. **Generate_Daily_Regime_Report.bat** — Quick daily report launcher
+3. **V3D_Daily_Workflow_Guide.txt** — This file
+
+---
+
+## What the Analysis Script Does
+
+### 1. Regime Distribution
+Shows how much time markets spent in each of the 5 regime states:
+- TREND_EXPANSION (rare - expansion bot opportunities)
+- TREND_COMPRESSION (directional but slowing - momentum/sniper)
+- ROTATION_LIQUID (tradable chop - fader/ADX_DI)
+- ROTATION_ILLIQUID (dead chop - all bots off)
+- TRANSITION (conflict - all bots off)
+
+### 2. Bot Opportunity Analysis
+For each bot, shows:
+- **Percent of time allowed** to trade
+- **Average position size percentage** when allowed
+- **Expected setups per day**
+
+This tells you which bots will fire most frequently.
+
+### 3. Regime Duration Statistics
+Shows how long regimes persist:
+- Average duration in 5-minute bars
+- Median duration
+- Maximum run length
+- Total occurrences
+
+This tells you if regimes are stable or flip frequently.
+
+### 4. Intraday Timeline
+Regime distribution broken down by session phase:
+- OPENING_AUCTION
+- EARLY_TEST
+- POST_IB_MACRO
+- MID_MORNING_DISCOVERY
+- LUNCH_AUCTION
+- AFTERNOON_TREND_TEST
+- LATE_DAY_CONVICTION
+- Etc.
+
+This tells you when specific regimes are most likely to occur.
+
+### 5. Transition Matrix
+Probability matrix showing which regime typically follows which:
+- If currently in ROTATION_LIQUID, what's the % chance of transitioning to TREND_COMPRESSION next?
+- Shows regime stability vs. volatility
+
+---
+
+## Installation
+
+### Step 1: Copy Files to Scripts Folder
+
+```
+C:\V3D\Scripts\V3D_Regime_Analysis.py
+C:\V3D\Scripts\Generate_Daily_Regime_Report.bat
+```
+
+### Step 2: Verify Reports Folder Exists
+
+The script auto-creates this, but you can verify:
+
+```batch
+mkdir C:\V3D\Reports
+```
+
+---
+
+## Usage
+
+### Quick Daily Report (Most Common Use Case)
+
+**Every morning before market open:**
+
+```batch
+cd C:\V3D\Scripts
+Generate_Daily_Regime_Report.bat
+```
+
+This generates a report for yesterday's session and saves it to `C:\V3D\Reports\`
+
+**What you'll see:**
+- Complete regime breakdown for yesterday
+- Bot opportunity stats (which bots had the most setups)
+- Regime timeline across the day
+- Transition probabilities
+
+**Time required:** 30 seconds
+
+---
+
+### Command-Line Usage (Advanced)
+
+**Analyze yesterday's session:**
+```batch
+python V3D_Regime_Analysis.py --date 2026-04-26 --symbol BOTH
+```
+
+**Analyze most recent trading day (auto-detects date):**
+```batch
+python V3D_Regime_Analysis.py --last-session --symbol BOTH
+```
+
+**Analyze full 750-day history:**
+```batch
+python V3D_Regime_Analysis.py --full-history --symbol BOTH
+```
+
+**Analyze single instrument:**
+```batch
+python V3D_Regime_Analysis.py --last-session --symbol NQ
+```
+
+**Save to specific file:**
+```batch
+python V3D_Regime_Analysis.py --last-session --symbol BOTH --output C:\V3D\Reports\My_Report.txt
+```
+
+---
+
+## Sample Report Output
+
+```
+================================================================================
+V3D REGIME ANALYSIS — NQ
+================================================================================
+Generated: 2026-04-27 08:30:15
+
+Date Range: 2026-04-26 to 2026-04-26
+Trading Days: 1
+Total Bars: 20
+
+================================================================================
+1. REGIME DISTRIBUTION
+================================================================================
+Regime                        Count    Percent
+--------------------------------------------------
+TREND_EXPANSION                   0        0.0%
+TREND_COMPRESSION                 3       15.0%
+ROTATION_LIQUID                   8       40.0%
+ROTATION_ILLIQUID                 7       35.0%
+TRANSITION                        2       10.0%
+
+================================================================================
+2. BOT OPPORTUNITY ANALYSIS
+================================================================================
+Bot             Allowed %   Avg Size %   Setups/Day
+------------------------------------------------------------
+Expansion            0.0%        0.0%          0.0
+Momo                55.0%       67.5%         11.0
+Pine                40.0%       65.0%          8.0
+ADX_DI              40.0%       67.5%          8.0
+Sniper              15.0%       72.0%          3.0
+
+================================================================================
+3. REGIME DURATION STATISTICS (5-minute bars)
+================================================================================
+Regime                    Avg   Median      Max    Count
+-----------------------------------------------------------------
+TREND_EXPANSION           0.0        0        0        0
+TREND_COMPRESSION         1.5        1        3        2
+ROTATION_LIQUID           2.7        2        5        3
+ROTATION_ILLIQUID         3.5        3        5        2
+TRANSITION                1.0        1        1        2
+
+================================================================================
+4. INTRADAY REGIME TIMELINE
+================================================================================
+Phase                      TREND_EX TREND_CO ROTATION ROTATION TRANSITI
+                                               _LIQUID  _ILLIQU       ON
+-------------------------------------------------------------------------
+OPENING_AUCTION                0.0%     0.0%    50.0%    50.0%     0.0%
+EARLY_TEST                     0.0%     0.0%    66.7%    33.3%     0.0%
+POST_IB_MACRO                  0.0%    25.0%    50.0%     0.0%    25.0%
+MID_MORNING_DISCOVERY          0.0%    20.0%    40.0%    20.0%    20.0%
+... (etc.)
+
+================================================================================
+5. REGIME TRANSITION PROBABILITIES (%)
+================================================================================
+Rows = current regime | Columns = next regime
+
+From \ To             TREND_EX TREND_CO ROTATION ROTATION TRANSITI
+                                          _LIQUID  _ILLIQU       ON
+------------------------------------------------------------------------
+TREND_EXPANSION           0.0%     0.0%     0.0%     0.0%     0.0%
+TREND_COMPRESSION         0.0%    33.3%    33.3%    33.3%     0.0%
+ROTATION_LIQUID           0.0%    12.5%    37.5%    37.5%    12.5%
+ROTATION_ILLIQUID         0.0%     0.0%    42.9%    42.9%    14.3%
+TRANSITION                0.0%     0.0%    50.0%    50.0%     0.0%
+
+================================================================================
+END OF REPORT
+================================================================================
+```
+
+---
+
+## Daily Workflow — Pre-Market Routine
+
+### Time: 08:00–08:30 ET (Before Market Open)
+
+**Step 1: Generate Yesterday's Report (2 minutes)**
+
+```batch
+cd C:\V3D\Scripts
+Generate_Daily_Regime_Report.bat
+```
+
+**Review the report and note:**
+- Which regime dominated yesterday?
+- Which bots had the most opportunities?
+- Did regimes persist or flip frequently?
+- What regime ended the day? (likely to influence today's open)
+
+---
+
+**Step 2: Start Live V3D Pipeline (1 minute)**
+
+**Option A: Use the master launcher**
+```batch
+cd C:\V3D\Scripts
+Run_V3D_Pipeline.bat live
+```
+
+This opens 3 windows (Stage A, B, C) automatically.
+
+**Option B: Manual start (3 separate CMD windows)**
+```batch
+# Window 1
+python MacroRegimeBuilder_V3D.py --live --symbol BOTH --interval 30
+
+# Window 2  
+python HMMWatchdog_V3D.py --live --symbol BOTH --interval 30
+
+# Window 3
+python RegimeSupervisor_V3D.py --live --symbol BOTH --interval 30
+```
+
+---
+
+**Step 3: Verify Latest.csv Files Updating (1 minute)**
+
+```batch
+dir C:\V3D\V3D\*_Latest.csv
+```
+
+Both files should show timestamps within the last 1-2 minutes.
+
+---
+
+**Step 4: Load NT8 and Check HUD (2 minutes)**
+
+1. Open NinjaTrader 8
+2. Load your NQ and ES charts with the HUD
+3. Verify HUD shows "STALE" during pre-market (correct)
+4. Load your strategy bots (but keep them DISABLED until after 09:35)
+
+---
+
+**Step 5: Wait for RTH Open (09:30 ET)**
+
+- HUD will update at 09:35 ET (first checkpoint)
+- Review the initial regime classification
+- Based on yesterday's report + today's opening regime, decide which bots to enable
+
+---
+
+**Step 6: Enable Bots Based on Regime (09:35–09:45 ET)**
+
+**If HUD shows TREND_EXPANSION:**
+- Enable: Expansion_V3D, Momentum_V3D
+- Keep disabled: Fader, Sniper, ADX_DI
+
+**If HUD shows TREND_COMPRESSION:**
+- Enable: Momentum_V3D, Sniper_V3D
+- Keep disabled: Expansion, Fader, ADX_DI
+
+**If HUD shows ROTATION_LIQUID:**
+- Enable: Fader_V3D, ADX_DI_V3D, Momentum_V3D
+- Keep disabled: Expansion, Sniper
+
+**If HUD shows ROTATION_ILLIQUID or TRANSITION:**
+- Keep ALL bots disabled
+- Wait for regime to resolve
+
+---
+
+**Step 7: Monitor Throughout Day**
+
+- HUD updates every 5 minutes (at checkpoint times)
+- Watch for regime changes
+- Bots will auto-disable if HUD permissions change to 0
+- Use HUD override buttons if needed (manual intervention)
+
+---
+
+**Step 8: End of Day Review (16:15–16:30 ET)**
+
+Close all Python pipeline windows (Ctrl+C in each).
+
+**Optional:** Generate end-of-day report:
+```batch
+python V3D_Regime_Analysis.py --last-session --symbol BOTH
+```
+
+Review:
+- Which regime dominated today?
+- Which bots traded most?
+- Compare to yesterday's patterns
+- Note any regime transition patterns for tomorrow
+
+---
+
+## Weekly Analysis (Sundays)
+
+**Full history regime analysis:**
+
+```batch
+python V3D_Regime_Analysis.py --full-history --symbol BOTH --output C:\V3D\Reports\Weekly_Analysis.txt
+```
+
+This produces a comprehensive report across all 750 days showing:
+- Long-term regime distribution trends
+- Bot opportunity frequencies over time
+- Regime persistence patterns
+- Transition probabilities
+
+**Use this to:**
+- Calibrate bot parameters
+- Identify which bots are getting the most opportunities
+- Adjust account allocation if needed
+- Spot regime regime shifts over weeks/months
+
+---
+
+## Report File Locations
+
+All reports save to: `C:\V3D\Reports\`
+
+**Naming convention:**
+```
+V3D_Regime_Report_20260427_083015.txt
+```
+
+Files accumulate over time — review and archive monthly.
+
+---
+
+## Interpreting the Results
+
+### High ROTATION_ILLIQUID % (>50%)
+**Meaning:** Markets are choppy and directionless  
+**Action:** Favor Fader and ADX_DI, reduce position sizes  
+**Bot impact:** Expansion will barely trade
+
+### High TREND_COMPRESSION % (>30%)
+**Meaning:** Markets are directional but within brackets  
+**Action:** Momentum and Sniper will have good opportunities  
+**Bot impact:** Fader opportunities reduced
+
+### High TREND_EXPANSION % (>5%)
+**Meaning:** Rare breakout conditions  
+**Action:** Expansion bot will fire — high conviction when it does  
+**Bot impact:** This is what you're waiting for
+
+### High TRANSITION % (>10%)
+**Meaning:** Macro and HMM disagree frequently  
+**Action:** Market is confused, reduce exposure  
+**Bot impact:** All bots blocked frequently
+
+---
+
+## Customizing the Analysis
+
+The Python script can be modified to add:
+- Custom date ranges
+- Additional metrics (average confidence scores, velocity stats)
+- Export to CSV for Excel analysis
+- Plotting/charting (requires matplotlib)
+
+See the script comments for extension points.
+
+---
+
+## Troubleshooting
+
+### "No data found for NQ on [date]"
+**Cause:** Date is outside the RegimeMatrix_Full.csv range  
+**Fix:** Check the date range in the Full.csv files
+
+### "Matrix file not found"
+**Cause:** RegimeMatrix_Full.csv not in C:\V3D\Backtest\  
+**Fix:** Run `Run_Supervisor_Batch.bat` to generate it
+
+### Report takes a long time to generate
+**Normal if:** Running full-history analysis (30-60 seconds)  
+**Not normal if:** Single-day analysis takes >5 seconds  
+**Fix:** Check if CSV file is corrupt or too large
+
+---
+
+## Next Steps After Reviewing Reports
+
+1. **Use bot opportunity % to allocate accounts**
+   - If Fader has 40% opportunities, it deserves more accounts
+   - If Expansion has 1% opportunities, it needs fewer accounts
+
+2. **Adjust SizePct scaling based on regime confidence**
+   - High confidence in stable regimes → increase size
+   - Low confidence in flippy regimes → reduce size
+
+3. **Time bot entries based on intraday timeline**
+   - If TREND_EXPANSION most common POST_IB_MACRO → watch that phase
+   - If ROTATION_LIQUID dominates LUNCH_AUCTION → fade those edges
+
+4. **Use transition matrix for regime anticipation**
+   - If in ROTATION_LIQUID with 40% chance of transitioning to TREND_COMPRESSION → prepare Momentum bot
+
+---
+
+*End of V3D Regime Analysis & Daily Workflow Guide*
+*Version 1.0 — 2026-04-27*

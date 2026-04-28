@@ -1,0 +1,382 @@
+# V3D RegimeSupervisor — Setup and Usage Guide
+
+## Overview
+
+The RegimeSupervisor is **Stage C** of the V3D pipeline. It merges Stage A (macro regimes) and Stage B (HMM classifications) into final regime states with bot permissions and position sizing.
+
+**You are here:** Chat V3D-2 (partial) — building the missing Stage C supervisor.
+
+---
+
+## Files Included
+
+1. **RegimeSupervisor_V3D.py** — The main Python script
+2. **Run_Supervisor_Batch.bat** — ONE-TIME batch run to process full history
+3. **Run_Supervisor_Live.bat** — Continuous live mode for real-time operation
+4. **V3D_Setup_Junction.bat** — Creates C:\V3D spaceless path (if needed)
+
+---
+
+## Pre-Installation Checklist
+
+Before running the supervisor, verify these files exist:
+
+### Stage A Output (MacroRegimeBuilder):
+- ✅ `C:\Users\Valued Customer\NT8_Regimes\V3D\NQ_Macro_Regimes_V3D.csv`
+- ✅ `C:\Users\Valued Customer\NT8_Regimes\V3D\ES_Macro_Regimes_V3D.csv`
+
+### Stage B Output (HMMWatchdog):
+- ✅ `C:\Users\Valued Customer\NT8_Regimes\V3D\NQ_HMM_Regimes_V3D.csv`
+- ✅ `C:\Users\Valued Customer\NT8_Regimes\V3D\ES_HMM_Regimes_V3D.csv`
+
+**If any are missing:** Run the V3D pipeline batch files first:
+```
+Run_V3D_Pipeline.bat batch
+```
+
+---
+
+## Installation Steps
+
+### Step 1: Create C:\V3D Junction (ONCE — requires admin)
+
+The V3D scripts use `C:\V3D` as a spaceless alias to avoid path issues with "Valued Customer".
+
+1. Right-click **V3D_Setup_Junction.bat**
+2. Choose **"Run as administrator"**
+3. Verify you see: "SUCCESS - C:\V3D junction created successfully"
+
+**Verification:**
+```
+dir C:\V3D
+```
+Should show `<JUNCTION>` and list the NT8_Regimes contents.
+
+---
+
+### Step 2: Install RegimeSupervisor_V3D.py
+
+Copy **RegimeSupervisor_V3D.py** to:
+```
+C:\V3D\Scripts\RegimeSupervisor_V3D.py
+```
+
+(Same location as MacroRegimeBuilder_V3D.py and HMMWatchdog_V3D.py)
+
+**Verification:**
+```
+dir C:\V3D\Scripts\RegimeSupervisor_V3D.py
+```
+Should show the file (approximately 30 KB).
+
+---
+
+### Step 3: Copy Batch Files
+
+Copy these three .bat files to your working directory (wherever you keep the V3D batch files):
+
+- **Run_Supervisor_Batch.bat**
+- **Run_Supervisor_Live.bat**
+- **V3D_Setup_Junction.bat** (if not already run)
+
+Suggested location: `C:\V3D\` or your desktop for easy access.
+
+---
+
+## FIRST RUN: Batch Processing (Tomorrow's Task)
+
+### What This Does
+
+Processes the **FULL HISTORY** (June 2024 – present) and creates:
+- `C:\V3D\Backtest\NQ_RegimeMatrix_Full.csv`
+- `C:\V3D\Backtest\ES_RegimeMatrix_Full.csv`
+
+These are the files you need for regime analysis.
+
+### How to Run
+
+1. Double-click **Run_Supervisor_Batch.bat**
+2. Watch the console output — it will show:
+   - Loading macro and HMM files
+   - Merging on session_key
+   - Computing scores and classifications
+   - Final regime distribution stats
+3. Expected runtime: **2-5 minutes** (depends on data size)
+
+### Expected Output
+
+At completion, you should see:
+
+```
+[NQ] Processed 14,965 rows
+[NQ] Regime distribution:
+TREND_EXPANSION         3,247
+TREND_COMPRESSION       4,892
+ROTATION_LIQUID         2,156
+ROTATION_ILLIQUID       3,894
+TRANSITION                776
+
+Written full history: C:\V3D\Backtest\NQ_RegimeMatrix_Full.csv (14,965 rows)
+```
+
+(Similar for ES)
+
+---
+
+## Output File Schema
+
+The `RegimeMatrix_Full.csv` contains these key columns:
+
+### Core Identifiers
+- `session_key` — Join key (e.g., "NQ_20260424_10:35")
+- `TimestampET` — Checkpoint timestamp
+- `Symbol` — NQ or ES
+
+### Input Layers
+- `MacroRegime` — Stage A classification (TREND, ROTATION, BALANCE)
+- `MacroPlaybook` — Stage A playbook state
+- `HMMRegime` — Stage B classification (TrendUp, TrendDown, Balance, Transition)
+
+### Supervisor Scores
+- `TrendExpansionScore` — Raw score (0-100)
+- `KalmanSmoothedScore` — Smoothed score after Kalman filter
+- `ConflictScore` — Disagreement between macro and HMM (0.0-1.0)
+
+### Final Classification
+- `FinalRegime` — One of: TREND_EXPANSION, TREND_COMPRESSION, ROTATION_LIQUID, ROTATION_ILLIQUID, TRANSITION
+- `FinalDirection` — LONG, SHORT, or NEUTRAL
+- `RegimeConfidence` — Confidence score (0-100)
+- `ReasonCode` — Why this regime was chosen
+
+### Bot Permissions (Boolean Flags)
+- `AllowExpansion`, `AllowMomo`, `AllowPine`, `AllowADX_DI`, `AllowSniper`
+- `AllowLong`, `AllowShort`, `AllowFadeLong`, `AllowFadeShort`
+
+### Position Sizing
+- `ExpansionSizePct`, `MomoSizePct`, `PineSizePct`, `ADX_DISizePct`, `SniperSizePct`
+- Values: 0-100 (percentage of max position size)
+
+### Metadata
+- `Phase` — Session phase (OPENING_AUCTION, POST_IB_MACRO, etc.)
+- `StateAgeBars` — How many consecutive bars in this regime
+- `StaleDataFlag` — 0 in batch mode (always fresh)
+
+---
+
+## Verification Steps (After Batch Run)
+
+### 1. Check File Existence
+```
+dir C:\V3D\Backtest\NQ_RegimeMatrix_Full.csv
+dir C:\V3D\Backtest\ES_RegimeMatrix_Full.csv
+```
+
+### 2. Row Count Check
+Open one file in Excel or a text editor. Row count should match the macro CSV:
+- NQ: ~14,965 rows (20 checkpoints/day × ~750 days)
+- ES: ~14,951 rows
+
+### 3. Regime Distribution Check
+Count FinalRegime values. Expected approximate distribution:
+- TREND_EXPANSION: 15-25%
+- TREND_COMPRESSION: 30-35%
+- ROTATION_LIQUID: 15-20%
+- ROTATION_ILLIQUID: 20-30%
+- TRANSITION: 3-8%
+
+### 4. Spot Check Logic
+Pick a random row. Verify:
+- If `FinalRegime = TREND_EXPANSION`, then `AllowExpansion = 1` and `AllowPine = 0`
+- If `FinalRegime = TRANSITION`, then ALL bot permissions = 0
+- `SizePct` values are 0 when bot is not allowed
+
+---
+
+## Common Issues and Fixes
+
+### Issue 1: "NQ_Macro_Regimes_V3D.csv not found"
+**Fix:** Run `Run_V3D_Pipeline.bat batch` first to generate Stage A and B outputs.
+
+### Issue 2: "Junction not found"
+**Fix:** Run `V3D_Setup_Junction.bat` as administrator.
+
+### Issue 3: "KeyError: 'session_key'"
+**Fix:** Your macro or HMM CSV is missing the `session_key` column. Re-run the pipeline with the latest versions of MacroRegimeBuilder and HMMWatchdog.
+
+### Issue 4: Merge produces zero rows
+**Fix:** The `session_key` values don't align between Stage A and Stage B. This usually means:
+- One stage was run on a different date range
+- One stage failed silently and produced incomplete output
+- Re-run BOTH Stage A and Stage B in batch mode to sync them
+
+### Issue 5: Low row count (e.g., only 1,000 rows)
+**Fix:** Your macro CSV only contains recent data. Re-run MacroRegimeBuilder in batch mode on the full export file.
+
+---
+
+## After Batch Processing: What's Next
+
+Once you have `NQ_RegimeMatrix_Full.csv` and `ES_RegimeMatrix_Full.csv`:
+
+### Option A: Regime Analysis (Your Original Request)
+Run analysis on the Full.csv files to characterize:
+- Regime duration statistics
+- Transition matrices (which regimes follow which)
+- Confidence score distributions per regime
+- Bot opportunity frequency (how often each bot gets permission)
+- Expected moves per regime type
+
+### Option B: Live Operation
+Run `Run_Supervisor_Live.bat` to start real-time regime classification:
+- Reads Stage A/B outputs every 30 seconds
+- Writes `NQ_RegimeMatrix_Latest.csv` (single row, atomic)
+- NT8 HUD reads this file to display regime state and enable/disable bots
+
+### Option C: Shadow Testing
+Run the supervisor with the `--shadow` flag:
+```
+python C:\V3D\Scripts\RegimeSupervisor_V3D.py --batch --symbol BOTH --shadow
+```
+This writes files with `_SHADOW` suffix so you can test the supervisor logic without interfering with any existing live operation.
+
+---
+
+## Live Mode Usage (After Batch Testing)
+
+Once you're confident the batch run worked correctly:
+
+1. **Before Market Open:**
+   - Verify Stage A and B are running (Run_V3D_Pipeline.bat live)
+   - Launch `Run_Supervisor_Live.bat`
+   - Check that `RegimeMatrix_Latest.csv` updates every 30 seconds
+
+2. **During Market Hours:**
+   - Leave all three pipeline windows open
+   - NT8 HUD reads `RegimeMatrix_Latest.csv` automatically
+   - Monitor HUD display for regime state changes
+
+3. **End of Day:**
+   - Close all pipeline windows (Ctrl+C in each)
+   - RegimeMatrix_History.csv contains the full day's regime log
+
+---
+
+## Command-Line Options (Advanced)
+
+### Batch Mode
+```bash
+# Both instruments
+python RegimeSupervisor_V3D.py --batch --symbol BOTH
+
+# Single instrument
+python RegimeSupervisor_V3D.py --batch --symbol NQ
+
+# Shadow mode (testing)
+python RegimeSupervisor_V3D.py --batch --symbol BOTH --shadow
+```
+
+### Live Mode
+```bash
+# Both instruments, 30-second interval
+python RegimeSupervisor_V3D.py --live --symbol BOTH --interval 30
+
+# Single instrument, 60-second interval
+python RegimeSupervisor_V3D.py --live --symbol ES --interval 60
+```
+
+---
+
+## File Output Locations Summary
+
+### Batch Mode Creates:
+- `C:\V3D\Backtest\NQ_RegimeMatrix_Full.csv` — Full history for analysis
+- `C:\V3D\Backtest\ES_RegimeMatrix_Full.csv`
+- `C:\V3D\V3D\History\NQ_RegimeMatrix_History.csv` — Copy for convenience
+- `C:\V3D\V3D\History\ES_RegimeMatrix_History.csv`
+
+### Live Mode Creates/Updates:
+- `C:\V3D\V3D\NQ_RegimeMatrix_Latest.csv` — Single row, atomic writes
+- `C:\V3D\V3D\ES_RegimeMatrix_Latest.csv`
+- `C:\V3D\V3D\History\NQ_RegimeMatrix_History.csv` — Appends each update
+- `C:\V3D\V3D\History\ES_RegimeMatrix_History.csv`
+
+---
+
+## Dependencies
+
+The script requires these Python packages (should already be installed from Stage A/B):
+- pandas
+- numpy
+
+No additional installations needed if MacroRegimeBuilder and HMMWatchdog are working.
+
+---
+
+## Support and Troubleshooting
+
+### Logging
+All output goes to console. To save logs:
+```
+python RegimeSupervisor_V3D.py --batch --symbol BOTH > supervisor_log.txt 2>&1
+```
+
+### Debug Mode
+Add this near the top of RegimeSupervisor_V3D.py to see detailed scoring:
+```python
+logging.basicConfig(level=logging.DEBUG, ...)
+```
+
+### Test Single Row
+To test the classification logic on one checkpoint:
+```python
+# Open Python interactive
+python
+>>> import pandas as pd
+>>> df = pd.read_csv("C:/V3D/Backtest/NQ_RegimeMatrix_Full.csv")
+>>> print(df.iloc[1000])  # Examine row 1000
+```
+
+---
+
+## Success Criteria
+
+You know the batch run succeeded when:
+
+1. ✅ No Python errors in console
+2. ✅ Both Full.csv files exist in `C:\V3D\Backtest\`
+3. ✅ Row counts match macro CSV (~14,965 for NQ, ~14,951 for ES)
+4. ✅ Regime distribution looks reasonable (TRANSITION < 10%, others balanced)
+5. ✅ Spot checks show correct bot permission logic
+6. ✅ All SizePct columns are 0-100 and zero when bot not allowed
+
+---
+
+## Next Steps After Success
+
+Once batch processing completes successfully:
+
+1. **Send me the output summary** from the console (the regime distribution stats)
+2. **I'll build the regime analysis scripts** to characterize:
+   - Regime behavior over time
+   - Bot opportunity frequency
+   - Expected performance per regime
+3. **Then move to live testing** if analysis looks good
+
+---
+
+## Quick Reference: Tomorrow's Workflow
+
+```
+1. Verify Stage A/B files exist
+2. Run V3D_Setup_Junction.bat (if not done) — AS ADMIN
+3. Copy RegimeSupervisor_V3D.py to C:\V3D\Scripts\
+4. Double-click Run_Supervisor_Batch.bat
+5. Wait 2-5 minutes
+6. Verify output files in C:\V3D\Backtest\
+7. Report results back to me
+```
+
+---
+
+*End of Setup Guide — V3D RegimeSupervisor Stage C*
+*Generated: 2026-04-26*

@@ -1,0 +1,535 @@
+﻿RTH V3C Operator Setup Guide
+0. Global startup order
+Do this before opening/arming strategies:
+Step 1 — Start data engines
+Start the existing vB/Stage A/Stage B scripts first:
+Stage A Macro Builder
+Stage B HMM Watchdog
+
+
+Then start:
+C:\Users\Valued Customer\NT8_Regimes\V3C\Start_RegimeMatrixSupervisor.bat
+
+
+For Monday live RTH, Python should use:
+STALE_GUARD_ENABLED = True
+
+
+Step 2 — Confirm vC files update
+Confirm these are updating:
+C:\Users\Valued Customer\NT8_Regimes\V3C\ES_Regimes_V3C_Latest.csv
+C:\Users\Valued Customer\NT8_Regimes\V3C\NQ_Regimes_V3C_Latest.csv
+
+
+Step 3 — Add vC HUD to each instrument family
+Add:
+Regime Matrix HUD V3C
+
+
+HUD settings:
+Data Folder Path = C:\Users\Valued Customer\NT8_Regimes\V3C
+Use Leader Symbol Mapping = True
+Debug Prints = False
+
+
+You can load the vC HUD on the NQ and ES charts directly.
+The converted vC strategies use RegimeMatrixHUD_V3C.InstancesV3C, so the vC HUD must be loaded for the symbol family. Momo’s original structure uses a Trinity filter and lane selection that reads HUD lane booleans, and the vC copy redirects that to the new vC HUD.
+________________
+
+
+1. NQ RTH Setup
+NQ Tab Group
+I would build separate tabs for each chart/template type rather than stacking too many strategies on one chart.
+Recommended NQ tabs:
+NQ 1m Momo Anchor RTH
+NQ 5m Momo Anchor Bracket Sniper
+NQ 5m Momo Anchor
+NQ 5m Trinity Momentum Universal
+NQ 5m Momo Trinity RTH V001
+NQ ADXX V3C
+NQ ADX_DI V3C
+NQ Pine V3C
+
+
+You do not need to use all live Monday. Build them, verify they load, then decide which to arm.
+________________
+
+
+A. Momo_V3C — NQ 1-minute RTH Anchor
+Chart
+Instrument: NQ
+Chart type: 1-minute candle
+Trading hours: RTH or your normal RTH chart template
+
+
+Strategy
+Strategy: Momo_V3C
+Template: NQ.1m.Momo.Anchor.RTH
+
+
+Required settings after template load
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultUniversal
+Use Dual Series = False unless intentionally testing the HA workaround
+
+
+Purpose for Monday
+Primary NQ RTH momentum anchor.
+________________
+
+
+B. Momo_V3C — NQ 5-minute Anchor
+Chart
+Instrument: NQ
+Chart type: 5-minute candle
+Trading hours: RTH or your normal RTH chart template
+
+
+Strategy
+Strategy: Momo_V3C
+Template: NQ.5m.Momo.Anchor
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultUniversal
+Use Dual Series = False unless template specifically required otherwise
+
+
+Purpose for Monday
+Slower, cleaner Momo read. Less twitchy than 1-minute.
+________________
+
+
+C. Momo_V3C — NQ 5-minute Bracket Sniper
+Chart
+Instrument: NQ
+Chart type: 5-minute candle
+Trading hours: RTH
+
+
+Strategy
+Strategy: Momo_V3C
+Template: NQ.5m.Momo.Anchor.Bracket Sniper
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = BracketSniper
+Use Dual Series = False unless template specifically required otherwise
+
+
+Purpose for Monday
+Only test this when vC HUD shows:
+ROTATION_LIQUID
+SNIPER: ON
+
+
+Do not use this as the default first test. This is a bracket/rotation lane.
+________________
+
+
+D. Momo_V3C — NQ 5-minute Trinity Momentum Universal
+Chart
+Instrument: NQ
+Chart type: 5-minute candle
+Trading hours: RTH
+
+
+Strategy
+Strategy: Momo_V3C
+Template: NQ.5m.Trinity.Momentum.Universal
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultUniversal
+
+
+Purpose for Monday
+This is probably the best first Momo vC comparison template because it already sounds designed around Trinity/HUD filtering.
+________________
+
+
+E. Momo_V3C — NQ 5-minute Trinity RTH V001
+Chart
+Instrument: NQ
+Chart type: 5-minute candle
+Trading hours: RTH
+
+
+Strategy
+Strategy: Momo_V3C
+Template: NQ5mMomoTrinityRTHV001
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultUniversal
+
+
+Purpose for Monday
+RTH-specific Momo comparison against the universal Trinity template.
+________________
+
+
+2. ES RTH Setup
+ES Tab Group
+Recommended ES tabs:
+ES 1m Momo Anchor RTH
+ES 5m Momo Anchor RTH
+ES 5m Momo Anchor
+ES ADXX V3C
+ES ADX_DI V3C
+ES Pine V3C
+
+
+________________
+
+
+A. Momo_V3C — ES 1-minute Anchor RTH
+Chart
+Instrument: ES
+Chart type: 1-minute candle
+Trading hours: RTH or your normal RTH chart template
+
+
+Strategy
+Strategy: Momo_V3C
+Template: ES.1m.Momo.Anchor.RTH
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultUniversal
+Use Dual Series = False unless template specifically required otherwise
+
+
+Purpose for Monday
+Fast ES RTH momentum read.
+________________
+
+
+B. Momo_V3C — ES 5-minute Anchor RTH
+Chart
+Instrument: ES
+Chart type: 5-minute candle
+Trading hours: RTH
+
+
+Strategy
+Strategy: Momo_V3C
+Template: ES.5m.Momo.Anchor.RTH
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultUniversal
+
+
+Purpose for Monday
+Cleaner ES RTH momentum filter.
+________________
+
+
+C. Momo_V3C — ES 5-minute Anchor
+Chart
+Instrument: ES
+Chart type: 5-minute candle
+Trading hours: RTH or normal template hours
+
+
+Strategy
+Strategy: Momo_V3C
+Template: ES.5m.Momo.Anchor
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultUniversal
+
+
+Purpose for Monday
+Baseline ES 5-minute Momo comparison.
+________________
+
+
+3. ADXX_V3C Setup
+ADXX has two lanes:
+DefaultBreakout
+BracketSniper
+
+
+The original strategy maps DefaultBreakout to the HUD’s ADX permission and BracketSniper to the bracket-sniper lane.
+NQ ADXX_V3C — Default Breakout
+Chart
+Instrument: NQ
+Chart type: 1-minute candle or 5-minute candle
+
+
+Use whichever chart type your existing ADXX template was tuned on. If unsure for Monday, start with:
+NQ 1-minute candle
+
+
+Strategy
+Strategy: ADXX_V3C
+Template: use copied ADXX template, renamed under ADXX_V3C
+
+
+Template name currently unknown from the screenshot, so use your existing ADXX template equivalent and save it under the ADXX_V3C strategy.
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultBreakout
+
+
+Monday use
+Only expect this to be active when vC HUD shows:
+ADXX: ON
+
+
+Usually this should line up with:
+TREND_EXPANSION
+
+
+and possibly strong TREND_COMPRESSION later if we choose to loosen that in Python.
+________________
+
+
+ES ADXX_V3C — Default Breakout
+Chart
+Instrument: ES
+Chart type: 1-minute candle or 5-minute candle
+
+
+First pass:
+ES 1-minute candle
+
+
+Strategy
+Strategy: ADXX_V3C
+Template: copied ES ADXX template under ADXX_V3C
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultBreakout
+
+
+________________
+
+
+4. ADX_DI_V3C Setup
+ADX_DI also has:
+DefaultBreakout
+BracketSniper
+
+
+The original ADX.DI uses lane-specific Trinity gating and routes the selected lane through the HUD.
+NQ ADX_DI_V3C — Default Breakout
+Chart
+Instrument: NQ
+Chart type: 1-minute candle or 5-minute candle
+
+
+First pass:
+NQ 1-minute candle
+
+
+Strategy
+Strategy: ADX_DI_V3C
+Template: copied NQ ADX_DI template under ADX_DI_V3C
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultBreakout
+
+
+________________
+
+
+ES ADX_DI_V3C — Default Breakout
+Chart
+Instrument: ES
+Chart type: 1-minute candle or 5-minute candle
+
+
+First pass:
+ES 1-minute candle
+
+
+Strategy
+Strategy: ADX_DI_V3C
+Template: copied ES ADX_DI template under ADX_DI_V3C
+
+
+Required settings
+Enable Trinity Filter = True
+Selected HUD Lane = DefaultBreakout
+
+
+________________
+
+
+Optional Bracket Sniper Pass
+For both NQ and ES, create separate tabs if you want to test:
+Selected HUD Lane = BracketSniper
+
+
+Do not mix this with the breakout pass on the same chart/account.
+Use when vC HUD shows:
+ROTATION_LIQUID
+SNIPER: ON
+
+
+________________
+
+
+5. Pine_V3C Setup
+Pine has no dropdown lane. It simply asks the HUD whether Pine is allowed. The original Pine has Enable Trinity Filter, time filters, DI/ADX inputs, EMA/VWAP/manual no-trade zones, and no lane selector.
+NQ Pine_V3C
+Chart
+Instrument: NQ
+Chart type: 1-minute candle
+
+
+Strategy
+Strategy: Pine_V3C
+Template: copied NQ Pine template under Pine_V3C
+
+
+Template name unknown from current screenshot. Use your existing Pine template and save it under:
+Pine_V3C
+
+
+Required settings
+Enable Trinity Filter = True
+Enable Time Filters = same as original Pine template
+
+
+________________
+
+
+ES Pine_V3C
+Chart
+Instrument: ES
+Chart type: 1-minute candle
+
+
+Strategy
+Strategy: Pine_V3C
+Template: copied ES Pine template under Pine_V3C
+
+
+Required settings
+Enable Trinity Filter = True
+Enable Time Filters = same as original Pine template
+
+
+________________
+
+
+6. Monday RTH Workspace Layout
+For Monday, I would not arm everything at once.
+Build the workspace like this:
+NQ core tab set
+Tab 1: NQ 1m + Regime Matrix HUD V3C + Momo_V3C / NQ.1m.Momo.Anchor.RTH
+Tab 2: NQ 5m + Momo_V3C / NQ.5m.Trinity.Momentum.Universal
+Tab 3: NQ 5m + Momo_V3C / NQ5mMomoTrinityRTHV001
+Tab 4: NQ 1m + ADXX_V3C / DefaultBreakout
+Tab 5: NQ 1m + ADX_DI_V3C / DefaultBreakout
+Tab 6: NQ 1m + Pine_V3C
+
+
+ES core tab set
+Tab 1: ES 1m + Regime Matrix HUD V3C + Momo_V3C / ES.1m.Momo.Anchor.RTH
+Tab 2: ES 5m + Momo_V3C / ES.5m.Momo.Anchor.RTH
+Tab 3: ES 5m + Momo_V3C / ES.5m.Momo.Anchor
+Tab 4: ES 1m + ADXX_V3C / DefaultBreakout
+Tab 5: ES 1m + ADX_DI_V3C / DefaultBreakout
+Tab 6: ES 1m + Pine_V3C
+
+
+________________
+
+
+7. Monday RTH arming plan
+9:00–9:25 ET
+Start scripts and confirm files.
+Stage A running
+Stage B running
+V3C supervisor running
+V3C HUD fresh
+OG HUD still present if comparing vB
+
+
+Confirm vC HUD is not stale.
+9:25–9:35 ET
+Do not arm everything into the open.
+Recommended:
+Observe only
+Confirm HUD states
+Confirm vC lanes change correctly
+
+
+9:35–9:45 ET
+First possible arming window.
+Start with only:
+NQ Momo_V3C — NQ.1m.Momo.Anchor.RTH
+ES Momo_V3C — ES.1m.Momo.Anchor.RTH
+
+
+Reason: Momo is the simplest V3C conversion and easiest to monitor.
+9:45–10:30 ET
+If vC HUD is behaving correctly, test one ADX lane:
+NQ ADXX_V3C DefaultBreakout
+or
+ES ADXX_V3C DefaultBreakout
+
+
+Do not run ADXX and ADX_DI simultaneously on the same instrument unless intentionally comparing with separate accounts.
+10:30–11:30 ET
+Test slower Momo variants:
+NQ.5m.Trinity.Momentum.Universal
+NQ5mMomoTrinityRTHV001
+ES.5m.Momo.Anchor.RTH
+
+
+Rotation-only test
+Only arm bracket/sniper templates when vC HUD clearly shows:
+ROTATION_LIQUID
+SNIPER: ON
+
+
+For now, avoid using BracketSniper during:
+TREND_EXPANSION
+TRANSITION
+ROTATION_ILLIQUID
+
+
+________________
+
+
+8. Template names currently visible
+From your screenshot, confirmed Momo templates:
+ES Momo templates
+ES.1m.Momo.Anchor.RTH
+ES.5m.Momo.Anchor.RTH
+ES.5m.Momo.Anchor
+
+
+NQ Momo templates
+NQ.5m.Momo.Anchor.Bracket Sniper
+NQ.5m.Momo.Anchor
+NQ.5m.Momo.Anchor.RTH
+NQ.5m.Trinity.Momentum.Universal
+NQ5mMomoTrinityRTHV001
+
+
+I do not currently see the ADXX, ADX_DI, or Pine template names from this screenshot. For those, use the original template folder copies and save them under:
+ADXX_V3C
+ADX_DI_V3C
+Pine_V3C
+
+
+Once you open those template folders or send a screenshot, I can plug their exact template names into the setup map.

@@ -1,0 +1,261 @@
+# V3D Full History Processing — Step-by-Step Instructions
+
+## Problem Summary
+
+Your current HMM output only has **1,194 rows** instead of the expected **~14,965 rows** because the HMMWatchdog_V3D.py script uses a **60-day rolling window** by default. This is correct for live operation but wrong for initial historical processing.
+
+## Solution
+
+Run the HMM in **full history mode** to process all 750 days, then re-run the Regime Supervisor to merge macro + HMM properly.
+
+---
+
+## Step-by-Step Instructions
+
+### Step 1: Backup Current Files (Optional but Recommended)
+
+```batch
+cd C:\V3D\V3D
+mkdir Backup_20260427
+copy NQ_HMM_Regimes_V3D.csv Backup_20260427\
+copy ES_HMM_Regimes_V3D.csv Backup_20260427\
+```
+
+This saves your current 1,194-row HMM files in case you need them.
+
+---
+
+### Step 2: Replace HMMWatchdog_V3D.py with Modified Version
+
+**Location:** `C:\V3D\Scripts\HMMWatchdog_V3D.py`
+
+**Action:** Replace the existing file with the modified version I'm providing.
+
+The modified version adds a `--full-history` flag that disables the 60-day rolling window.
+
+**Files to copy:**
+- `HMMWatchdog_V3D_Modified.py` → rename to `HMMWatchdog_V3D.py` in `C:\V3D\Scripts\`
+
+---
+
+### Step 3: Verify Export Files Exist
+
+Check that these files have data:
+
+```batch
+dir C:\V3D\Exports\NQ_1min_export.txt
+dir C:\V3D\Exports\ES_1min_export.txt
+```
+
+Expected file sizes: **100+ MB each** (if you have ~750 days of data)
+
+If files are missing or small (<10 MB), you need to run the data stitcher first.
+
+---
+
+### Step 4: Run HMM in Full History Mode
+
+**Method 1: Using the batch file (recommended)**
+
+1. Copy `Run_HMM_FullHistory.bat` to `C:\V3D\Scripts\`
+2. Double-click `Run_HMM_FullHistory.bat`
+3. Wait 5-10 minutes (coffee break time!)
+
+**Method 2: Command line**
+
+```batch
+cd C:\V3D\Scripts
+python HMMWatchdog_V3D.py --once --full-history --symbol BOTH
+```
+
+---
+
+### Step 5: Verify HMM Output
+
+After completion, check the files:
+
+```batch
+dir C:\V3D\V3D\NQ_HMM_Regimes_V3D.csv
+dir C:\V3D\V3D\ES_HMM_Regimes_V3D.csv
+```
+
+**Expected:**
+- Row counts: **~14,965 rows each** (not 4,705!)
+- File sizes: **~2-3 MB each**
+
+**To check row count in command prompt:**
+
+```batch
+powershell -Command "(Import-Csv 'C:\V3D\V3D\NQ_HMM_Regimes_V3D.csv').Count"
+```
+
+Should show: `14965` (approximately)
+
+---
+
+### Step 6: Re-Run RegimeSupervisor in Batch Mode
+
+Now that you have the full HMM history, merge it with macro:
+
+```batch
+cd C:\V3D\Scripts
+Run_Supervisor_Batch.bat
+```
+
+**Expected output:**
+
+```
+[NQ] Loaded macro regimes: 14965 rows
+[NQ] Loaded HMM regimes: 14965 rows
+[NQ] Merged 14965 rows (macro 14965, hmm 14965)
+```
+
+✅ **100% merge success** (not 8% like before!)
+
+---
+
+### Step 7: Verify Final Output
+
+Check the RegimeMatrix_Full.csv files:
+
+```batch
+dir C:\V3D\Backtest\NQ_RegimeMatrix_Full.csv
+dir C:\V3D\Backtest\ES_RegimeMatrix_Full.csv
+```
+
+**Expected:**
+- Row counts: **~14,965 rows each**
+- File sizes: **~4-5 MB each**
+
+---
+
+## What to Watch For
+
+### During HMM Processing (Step 4)
+
+You'll see console output like this:
+
+```
+[NQ] Loading FULL export file (no rolling window)...
+[NQ] RTH data: 280,000 bars across 750 trading days
+[NQ] Resampling to 5-min...
+[NQ] 5-min bars: 60,000
+[NQ] Building feature matrix...
+[NQ] Fitting HMM on 59,500 bars... (this may take 2-5 minutes)
+```
+
+**This is normal.** The HMM fit on 750 days of data takes time.
+
+### Expected Warnings
+
+You might see:
+```
+/usr/lib/python3.x/site-packages/sklearn/utils/extmath.py:...
+RuntimeWarning: invalid value encountered in scalar divide
+```
+
+**This is harmless.** It's a numerical precision warning from the HMM library.
+
+---
+
+## Troubleshooting
+
+### Issue 1: "Module 'hmmlearn' not found"
+
+**Fix:**
+```batch
+pip install hmmlearn --break-system-packages
+```
+
+### Issue 2: HMM still produces 4,705 rows
+
+**Cause:** You didn't use the `--full-history` flag.
+
+**Fix:** Make sure you run:
+```batch
+python HMMWatchdog_V3D.py --once --full-history --symbol BOTH
+```
+
+Not just:
+```batch
+python HMMWatchdog_V3D.py --once --symbol BOTH
+```
+
+### Issue 3: "All HMM fit attempts failed"
+
+**Cause:** Not enough data or numerical instability.
+
+**Fix:** Check that export files have at least 6 months of data. If less, the HMM cannot reliably fit 4 states.
+
+### Issue 4: Process takes longer than 10 minutes
+
+**Normal if:**
+- You have more than 1 year of data
+- Your CPU is older/slower
+- Other programs are running
+
+**Not normal if:**
+- Process hangs for 30+ minutes with no output
+- CPU usage is 0%
+
+If hung, press Ctrl+C, restart, and try one instrument at a time:
+```batch
+python HMMWatchdog_V3D.py --once --full-history --symbol NQ
+python HMMWatchdog_V3D.py --once --full-history --symbol ES
+```
+
+---
+
+## After Successful Completion
+
+Once you have **~14,965 rows** in both:
+- `NQ_RegimeMatrix_Full.csv`
+- `ES_RegimeMatrix_Full.csv`
+
+You're ready for regime analysis!
+
+**Report back with:**
+1. Final row counts from RegimeMatrix_Full.csv files
+2. Regime distribution (console output from supervisor batch run)
+3. Any errors encountered
+
+Then I'll build the regime analysis scripts to characterize:
+- Regime duration statistics
+- Transition probabilities
+- Bot opportunity frequencies
+- Expected performance per regime type
+
+---
+
+## Quick Reference Commands
+
+```batch
+# Check HMM output row count
+powershell -Command "(Import-Csv 'C:\V3D\V3D\NQ_HMM_Regimes_V3D.csv').Count"
+
+# Check Macro output row count
+powershell -Command "(Import-Csv 'C:\V3D\V3D\NQ_Macro_Regimes_V3D.csv').Count"
+
+# Check final merged row count
+powershell -Command "(Import-Csv 'C:\V3D\Backtest\NQ_RegimeMatrix_Full.csv').Count"
+
+# All three should be ~14,965
+```
+
+---
+
+## Timeline Estimate
+
+- **Step 1-3:** 5 minutes (setup)
+- **Step 4:** 5-10 minutes (HMM batch processing)
+- **Step 5:** 2 minutes (verification)
+- **Step 6:** 3-5 minutes (supervisor batch)
+- **Step 7:** 2 minutes (final verification)
+
+**Total:** 20-30 minutes from start to finish
+
+---
+
+*End of Step-by-Step Guide*
+*V3D Full History Processing*
+*2026-04-27*
