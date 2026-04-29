@@ -1,20 +1,20 @@
 {
-  "NQ_last_fit_rows": 1025586,
-  "NQ_last_fit_ts": "2026-04-29T09:27:26.965664",
-  "NQ_last_ll": 35788.1417,
+  "NQ_last_fit_rows": 1026790,
+  "NQ_last_fit_ts": "2026-04-29T16:09:33.599798",
+  "NQ_last_ll": 36133.8325,
   "NQ_label_map": {
-    "0": "TrendUp",
-    "2": "TrendDown",
-    "3": "Balance",
-    "1": "Transition"
+    "1": "TrendUp",
+    "3": "TrendDown",
+    "2": "Balance",
+    "0": "Transition"
   },
-  "ES_last_fit_rows": 1023983,
-  "ES_last_fit_ts": "2026-04-29T09:27:35.713745",
-  "ES_last_ll": 37238.9984,
+  "ES_last_fit_rows": 1025187,
+  "ES_last_fit_ts": "2026-04-29T16:09:48.972725",
+  "ES_last_ll": 37251.4622,
   "ES_label_map": {
-    "3": "TrendUp",
-    "2": "TrendDown",
-    "0": "Balance",
-    "1": "Transition"
+    "0": "TrendUp",
+    "1": "TrendDown",
+    "3": "Balance",
+    "2": "Transition"
   }
 }
