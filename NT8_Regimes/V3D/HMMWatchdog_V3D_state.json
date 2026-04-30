@@ -1,6 +1,6 @@
 {
-  "NQ_last_fit_rows": 1026790,
-  "NQ_last_fit_ts": "2026-04-29T16:09:33.599798",
+  "NQ_last_fit_rows": 1026901,
+  "NQ_last_fit_ts": "2026-04-30T08:56:20.289619",
   "NQ_last_ll": 36133.8325,
   "NQ_label_map": {
     "1": "TrendUp",
@@ -8,8 +8,8 @@
     "2": "Balance",
     "0": "Transition"
   },
-  "ES_last_fit_rows": 1025187,
-  "ES_last_fit_ts": "2026-04-29T16:09:48.972725",
+  "ES_last_fit_rows": 1025299,
+  "ES_last_fit_ts": "2026-04-30T08:56:35.186392",
   "ES_last_ll": 37251.4622,
   "ES_label_map": {
     "0": "TrendUp",
