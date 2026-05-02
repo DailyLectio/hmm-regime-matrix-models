@@ -1,8 +1,8 @@
 """
 Build the unified daily trade export for V1A, V3C, V3D, and standalone accounts.
 
-This script intentionally does not trust model_version from raw logs. Account
-registry mapping is authoritative, which fixes V3C rows previously stamped V3D.
+This script normally treats the account registry as authoritative for model
+taxonomy, while preserving raw OG rows so legacy strategies stay labeled OG.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ RAW_TRADE_LOGS = [
     BASE_DIR / "V1B" / "TradeLog" / "V1B_TradeLog.csv",
     BASE_DIR / "V3C" / "TradeLog" / "V3C_TradeLog.csv",
     BASE_DIR / "V3D" / "TradeLog" / "V3D_TradeLog.csv",
+    BASE_DIR / "OG" / "TradeLog" / "OG_TradeLog.csv",
 ]
 
 UNIFIED_COLUMNS = [
@@ -47,6 +48,8 @@ UNIFIED_COLUMNS = [
     "ticks",
     "win_loss",
     "exit_reason",
+    "initial_stop_price",
+    "initial_stop_distance",
     "entry_regime",
     "entry_macro",
     "entry_hmm",
@@ -56,6 +59,7 @@ UNIFIED_COLUMNS = [
     "broad_agree",
     "v3c_regime_at_entry",
     "trade_duration_min",
+    "r_multiple",
     "risk_reward_actual",
     "session_trade_rank",
     "daily_pnl_running",
@@ -107,7 +111,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def ensure_taxonomy(base_dir: Path) -> None:
-    roots = ["V1A", "V1B", "V3C", "V3D", "UNIFIED"]
+    roots = ["V1A", "V1B", "V3C", "V3D", "OG", "UNIFIED"]
     subdirs = ["Config", "TradeLog", "History", "Regime", "Exports"]
     for root in roots:
         root_dir = base_dir / root
@@ -165,6 +169,26 @@ def read_trade_logs(paths: list[Path]) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True, sort=False)
 
 
+def discover_raw_trade_logs(base_dir: Path) -> list[Path]:
+    paths: list[Path] = []
+    for rel in RAW_TRADE_LOGS:
+        paths.append(base_dir / rel.relative_to(BASE_DIR))
+    for model in ("V1A", "V1B", "V3C", "V3D", "OG"):
+        trade_dir = base_dir / model / "TradeLog"
+        if trade_dir.exists():
+            paths.extend(sorted(trade_dir.glob("*_TradeLog.csv")))
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = path.resolve() if path.exists() else path
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
 def normalize_trades(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     aliases = {
@@ -192,7 +216,16 @@ def normalize_trades(df: pd.DataFrame) -> pd.DataFrame:
         parsed_dates = pd.to_datetime(df["trade_date"], errors="coerce")
         df["trade_date"] = parsed_dates.dt.date.astype(str)
 
-    for col in ("contracts", "entry_price", "exit_price", "gross_pnl", "net_pnl", "ticks"):
+    for col in (
+        "contracts",
+        "entry_price",
+        "exit_price",
+        "gross_pnl",
+        "net_pnl",
+        "ticks",
+        "initial_stop_price",
+        "initial_stop_distance",
+    ):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -224,6 +257,11 @@ def normalize_trades(df: pd.DataFrame) -> pd.DataFrame:
 
 def apply_registry(df: pd.DataFrame, registry: dict[str, dict[str, Any]]) -> pd.DataFrame:
     df = df.copy()
+    raw_model = (
+        df["model_version"].astype(str).str.upper()
+        if "model_version" in df.columns
+        else pd.Series("", index=df.index)
+    )
 
     def lookup(account: Any, key: str, default: str) -> str:
         return str(registry.get(str(account), {}).get(key, default))
@@ -234,7 +272,49 @@ def apply_registry(df: pd.DataFrame, registry: dict[str, dict[str, Any]]) -> pd.
     if "bot_name" not in df.columns:
         df["bot_name"] = "UNMAPPED"
     df["bot_name"] = df["bot_name"].replace({"Unknown_Bot": "UNMAPPED", "": "UNMAPPED"}).fillna("UNMAPPED")
+    og_mask = raw_model.eq("OG")
+    if og_mask.any():
+        df.loc[og_mask, "model_version"] = "OG"
+        df.loc[og_mask, "ab_mode"] = "OG"
+        strategy_text = df["strategy_name"].astype(str).str.strip()
+        unmapped_strategy = df["strategy_name"].isna() | strategy_text.isin(["UNKNOWN", "", "nan", "None"])
+        df.loc[og_mask & unmapped_strategy, "strategy_name"] = df.loc[og_mask & unmapped_strategy, "bot_name"]
     return df
+
+
+def dedupe_trades(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    signature_cols = [
+        "trade_date",
+        "entry_time",
+        "exit_time",
+        "account",
+        "symbol",
+        "instrument",
+        "direction",
+        "contracts",
+        "entry_price",
+        "exit_price",
+        "net_pnl",
+        "exit_reason",
+    ]
+    signature_cols = [col for col in signature_cols if col in df.columns]
+    if not signature_cols:
+        return df
+
+    score = pd.Series(0, index=df.index)
+    if "initial_stop_distance" in df.columns:
+        score += df["initial_stop_distance"].notna().astype(int) * 4
+    if "initial_stop_price" in df.columns:
+        score += df["initial_stop_price"].notna().astype(int) * 2
+    if "bot_name" in df.columns:
+        bot_text = df["bot_name"].fillna("").astype(str).str.strip()
+        score += (~bot_text.isin(["", "Unknown_Bot", "UNMAPPED", "UNKNOWN"])).astype(int)
+
+    df["_stage1_quality_score"] = score
+    df = df.sort_values("_stage1_quality_score", ascending=False, kind="mergesort")
+    df = df.drop_duplicates(subset=signature_cols, keep="first")
+    return df.drop(columns=["_stage1_quality_score"])
 
 
 def select_time_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -388,7 +468,18 @@ def enrich_with_broad_agree(base_dir: Path, trades: pd.DataFrame) -> pd.DataFram
 def derive_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["trade_duration_min"] = ((df["exit_time"] - df["entry_time"]).dt.total_seconds() / 60).round(2)
-    df["risk_reward_actual"] = pd.NA
+    if "initial_stop_distance" not in df.columns:
+        df["initial_stop_distance"] = pd.NA
+    df["initial_stop_distance"] = pd.to_numeric(df["initial_stop_distance"], errors="coerce")
+    df["net_pnl"] = pd.to_numeric(df["net_pnl"], errors="coerce")
+    df["r_multiple"] = pd.NA
+    valid_r = df["initial_stop_distance"].notna() & (df["initial_stop_distance"] > 0)
+    df.loc[valid_r, "r_multiple"] = (
+        df.loc[valid_r, "net_pnl"] / df.loc[valid_r, "initial_stop_distance"]
+    ).round(2)
+    if "risk_reward_actual" not in df.columns:
+        df["risk_reward_actual"] = pd.NA
+    df["risk_reward_actual"] = df["risk_reward_actual"].combine_first(df["r_multiple"])
     df = df.sort_values(["account", "trade_date", "entry_time"], na_position="last")
     df["session_trade_rank"] = df.groupby(["account", "trade_date"], dropna=False).cumcount() + 1
     df["daily_pnl_running"] = (
@@ -438,7 +529,7 @@ def write_outputs(base_dir: Path, df: pd.DataFrame, export_date: date | None) ->
     df.to_csv(unified_path, index=False)
     written.append(unified_path)
 
-    for model in ("V1A", "V1B", "V3C", "V3D"):
+    for model in ("V1A", "V1B", "V3C", "V3D", "OG"):
         subset = df[df["model_version"] == model]
         if subset.empty:
             continue
@@ -470,7 +561,7 @@ def main() -> int:
     ensure_taxonomy(base_dir)
 
     registry = load_registry(base_dir / REGISTRY_PATH.name)
-    raw_paths = [base_dir / p.relative_to(BASE_DIR) for p in RAW_TRADE_LOGS]
+    raw_paths = discover_raw_trade_logs(base_dir)
     trades = read_trade_logs(raw_paths)
     if trades.empty:
         print("No raw trade logs found.")
@@ -484,6 +575,7 @@ def main() -> int:
         print("No trades matched the requested date.")
         return 1
 
+    trades = dedupe_trades(trades)
     trades = apply_registry(trades, registry)
     trades = enrich_with_regime(base_dir, trades, export_date, args.regime_tolerance)
     trades = enrich_with_broad_agree(base_dir, trades)
