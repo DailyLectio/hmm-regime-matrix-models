@@ -52,6 +52,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Indicators.RegimeMatrixHUD_V3C.InstancesV3C.TryGetValue(leaderSymbol, out hudInstance);
 
             if (hudInstance != null)
+                hudInstance.RefreshFromFile();
+
+            if (hudInstance != null)
             {
                 if (SelectedHudLane == MomoHudLane.DefaultUniversal)
                     return hudInstance.IsMomoAllowed;
@@ -76,6 +79,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!Indicators.RegimeMatrixHUD_V3C.InstancesV3C.TryGetValue(chartSymbol, out hudInstance))
                 Indicators.RegimeMatrixHUD_V3C.InstancesV3C.TryGetValue(leaderSymbol, out hudInstance);
 
+            if (hudInstance != null)
+                hudInstance.RefreshFromFile();
+
             if (hudInstance == null)
                 return false;
 
@@ -99,6 +105,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             if (!Indicators.RegimeMatrixHUD_V3C.InstancesV3C.TryGetValue(chartSymbol, out hudInstance))
                 Indicators.RegimeMatrixHUD_V3C.InstancesV3C.TryGetValue(leaderSymbol, out hudInstance);
+
+            if (hudInstance != null)
+                hudInstance.RefreshFromFile();
 
             if (hudInstance == null)
                 return false;

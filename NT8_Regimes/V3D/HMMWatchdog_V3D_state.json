@@ -1,20 +1,28 @@
 {
-  "NQ_last_fit_rows": 1026901,
-  "NQ_last_fit_ts": "2026-04-30T08:56:20.289619",
-  "NQ_last_ll": 36133.8325,
+  "NQ_last_fit_rows": 1030061,
+  "NQ_last_fit_ts": "2026-05-01T16:00:21.828196",
+  "NQ_last_ll": 35461.1653,
   "NQ_label_map": {
-    "1": "TrendUp",
+    "0": "TrendUp",
     "3": "TrendDown",
     "2": "Balance",
-    "0": "Transition"
+    "1": "Transition"
   },
-  "ES_last_fit_rows": 1025299,
-  "ES_last_fit_ts": "2026-04-30T08:56:35.186392",
-  "ES_last_ll": 37251.4622,
+  "ES_last_fit_rows": 1028096,
+  "ES_last_fit_ts": "2026-05-01T16:00:36.516337",
+  "ES_last_ll": 36433.6992,
   "ES_label_map": {
-    "0": "TrendUp",
-    "1": "TrendDown",
-    "3": "Balance",
-    "2": "Transition"
-  }
+    "3": "TrendUp",
+    "2": "TrendDown",
+    "0": "Balance",
+    "1": "Transition"
+  },
+  "NQ_last_fit_rth_rows": 293330,
+  "NQ_last_fit_5m_ts": "2026-05-01T16:00:00",
+  "ES_last_fit_rth_rows": 293844,
+  "ES_last_fit_5m_ts": "2026-05-01T16:00:00",
+  "NQ_last_seen_raw_rows": 1030205,
+  "NQ_last_seen_rth_rows": 293330,
+  "ES_last_seen_raw_rows": 1028207,
+  "ES_last_seen_rth_rows": 293844
 }

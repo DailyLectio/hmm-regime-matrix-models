@@ -97,6 +97,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!NinjaTrader.NinjaScript.Indicators.RegimeMatrixHUD_V3C.InstancesV3C.TryGetValue(chartSymbol, out hudInstance))
                 NinjaTrader.NinjaScript.Indicators.RegimeMatrixHUD_V3C.InstancesV3C.TryGetValue(leaderSymbol, out hudInstance);
 
+            if (hudInstance != null)
+                hudInstance.RefreshFromFile();
+
             return hudInstance;
         }
 

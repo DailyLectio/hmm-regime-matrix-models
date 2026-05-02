@@ -478,6 +478,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (bricksInExpansion < WaitBricks)            return;
                 // Gate 8: circuit breaker
                 if (consecutiveLosers >= MaxConsecutiveLosses) return;
+                if (ToTime(Time[0]) >= 154500)                 return;
                 // Gate 9: SizePct — zero means supervisor has not approved sizing
                 if (expansionSizePct <= 0)                     return;
 

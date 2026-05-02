@@ -1,7 +1,7 @@
 // CC BY-NC 4.0
 // Fader_V3D.cs  — V3D Institutional Regime Matrix  — Version A
 // ─────────────────────────────────────────────────────────────────
-// REGIME TARGET : ROTATION_LIQUID only.  No entries in any other state.
+// REGIME TARGET : ROTATION_LIQUID plus HMM-confirmed TREND_EXPANSION fades.
 // CHART TYPE    : 1-minute candles.  Calculate.OnBarClose.
 // INSTRUMENT    : NQ / ES  (MNQ / MES supported via leader-symbol map).
 // DIRECTION     : Bidirectional — fades both the low edge (long) and high edge (short).
@@ -26,7 +26,7 @@
 //   These are separate directional permission flags for counter-trend fade bots.
 //
 // ENTRY GATES (all must pass)
-//   FinalRegime == ROTATION_LIQUID
+//   FinalRegime == ROTATION_LIQUID or TREND_EXPANSION
 //   TwoSidedFlag == 1  (auction has traded both sides)
 //   AllowFadeLong or AllowFadeShort from supervisor
 //   Near structural edge (or Bollinger fallback)
@@ -539,12 +539,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             // Gate 1: data integrity
             if (parseFailed || staleDataFlag)              return;
             // Gate 2: regime
-            if (finalRegime != "ROTATION_LIQUID")          return;
+            if (finalRegime != "ROTATION_LIQUID" && finalRegime != "TREND_EXPANSION") return;
             // Gate 3: two-sided auction required
             if (twoSidedFlag != 1)                         return;
             // Gate 4: circuit breaker
             if (consecutiveLosers >= MaxConsecutiveLosses) return;
             // Gate 5: time filter
+            if (ToTime(Time[0]) >= 154500)                 return;
             if (!IsInTime())                               return;
             // Gate 6: SizePct — zero means supervisor has not approved fade sizing
             if (faderSizePct <= 0)                         return;

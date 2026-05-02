@@ -409,6 +409,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 bool regimeOk = finalRegime == "TREND_COMPRESSION" || finalRegime == "TREND_EMERGING";
                 if (!regimeOk)                                 return;
                 if (consecutiveLosers >= MaxConsecutiveLosses) return;
+                if (ToTime(Time[0]) >= 154500)                 return;
                 if (!IsInTime())                               return;
                 if (ibExtensionPct < IbExtensionMin || ibExtensionPct > IbExtensionMax) return;
                 if (sniperSizePct <= 0)                        return;

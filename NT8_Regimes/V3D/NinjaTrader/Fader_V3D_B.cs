@@ -4,6 +4,7 @@
 // A/B TEST PURPOSE
 //   Version A sets Leg2 profit target at the VWAP price captured at entry time.
 //   That snapshot is fixed — if VWAP drifts during the trade, the target does not move.
+//   Entries are allowed in ROTATION_LIQUID plus HMM-confirmed TREND_EXPANSION fades.
 //
 //   Version B tracks VWAP dynamically. When sessionVwap updates from the supervisor
 //   file, the Leg2 profit target is recalculated and resubmitted via SetProfitTarget.
@@ -514,9 +515,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             leg2VwapAtEntry = 0; lastUpdatedVwap = 0;
 
             if (parseFailed || staleDataFlag)              return;
-            if (finalRegime != "ROTATION_LIQUID")          return;
+            if (finalRegime != "ROTATION_LIQUID" && finalRegime != "TREND_EXPANSION") return;
             if (twoSidedFlag != 1)                         return;
             if (consecutiveLosers >= MaxConsecutiveLosses) return;
+            if (ToTime(Time[0]) >= 154500)                 return;
             if (!IsInTime())                               return;
             if (faderSizePct <= 0)                         return;
 

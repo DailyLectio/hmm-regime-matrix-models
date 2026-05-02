@@ -132,8 +132,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (CurrentBar < 1)
                 return;
 
-            LoadV3CFileIfNeeded();
+            LoadV3CFileIfNeeded(true);
             UpdateHUD();
+        }
+
+        public void RefreshFromFile()
+        {
+            LoadV3CFileIfNeeded(true);
         }
 
         private void RegisterInstance()
@@ -180,7 +185,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             return sym;
         }
 
-        private void LoadV3CFileIfNeeded()
+        private void LoadV3CFileIfNeeded(bool forceRead = false)
         {
             if (string.IsNullOrEmpty(DataFolderPath))
             {
@@ -213,7 +218,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             }
 
-            if (fileToRead == lastFileRead && writeUtc <= lastFileWriteUtc)
+            if (!forceRead && fileToRead == lastFileRead && writeUtc <= lastFileWriteUtc)
                 return;
 
             try

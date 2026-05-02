@@ -78,6 +78,9 @@ FINAL_REGIMES = {
     "TRANSITION",
 }
 
+EARLY_INITIATIVE_SCORE_MIN = 58
+BRACKET_INITIATIVE_SCORE_MIN = 55
+
 
 @dataclass(frozen=True)
 class InstrumentThresholds:
@@ -541,13 +544,13 @@ def classify_v3c_candidate(
     phase_allows_early_initiative = early_phase and phase_bucket != "LUNCH"
     if (
         phase_allows_early_initiative
-        and developing_score >= 62
+        and developing_score >= EARLY_INITIATIVE_SCORE_MIN
         and initiative_direction in {"LONG", "SHORT"}
         and same_side_vwap_minutes >= 5
         and conflict < 55
     ):
         candidate = "TREND_COMPRESSION"
-        confidence = 64 + int(min(16, (developing_score - 62) * 0.6))
+        confidence = 64 + int(min(16, (developing_score - EARLY_INITIATIVE_SCORE_MIN) * 0.6))
         if (
             developing_score >= 78
             and (ib_ext >= th.expansion_ib_ext or abs_velocity >= th.expansion_velocity)
@@ -561,6 +564,30 @@ def classify_v3c_candidate(
             "confidence": int(_clip(confidence, 62, 88)),
             "conflict": conflict,
             "reason": "DEVELOPING_INITIATIVE_PHASE_AWARE",
+        }
+
+    if (
+        macro_bracket
+        and phase_bucket in {"EARLY_AM", "POST_IB_AM", "PM", "POWER_HOUR"}
+        and developing_score >= BRACKET_INITIATIVE_SCORE_MIN
+        and initiative_direction in {"LONG", "SHORT"}
+        and (
+            same_side_vwap_minutes >= 5
+            or abs(close_vs_vwap) >= th.vwap_confirm_atr
+            or abs(net_move) >= th.net_move_confirm_atr
+        )
+        and not hmm_transition
+        and conflict < 55
+    ):
+        confidence = 60 + int(min(18, (developing_score - BRACKET_INITIATIVE_SCORE_MIN) * 0.7))
+        if hmm_trending and hmm_vwap_agrees:
+            confidence += 4
+        return {
+            "candidate": "TREND_COMPRESSION",
+            "direction": initiative_direction,
+            "confidence": int(_clip(confidence, 60, 84)),
+            "conflict": conflict,
+            "reason": "BRACKET_MACRO_WITH_INITIATIVE_EVIDENCE",
         }
 
     if conflict >= 55:

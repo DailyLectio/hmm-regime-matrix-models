@@ -531,6 +531,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 if (!IsRegimeAllowed())         return;
                 if (consecutiveLosers >= MaxConsecutiveLosses) return;
+                if (ToTime(Time[0]) >= 154500)  return;
                 if (!IsInTime())                return;
                 if (parseFailed || staleDataFlag) return;
 

@@ -498,6 +498,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (parseFailed || staleDataFlag)              return;
                 if (consecutiveLosers >= MaxConsecutiveLosses) return;
+                if (ToTime(Time[0]) >= 154500)                 return;
                 if (!IsInTime())                               return;
 
                 // Regime gate: ROTATION_LIQUID primary, TREND_COMPRESSION / TREND_EMERGING scout lane

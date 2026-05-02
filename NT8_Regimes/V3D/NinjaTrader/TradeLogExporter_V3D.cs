@@ -64,9 +64,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         // ---------------------------------------------------------------
         // Constants
         // ---------------------------------------------------------------
-        private const string BASE_PATH =
-            @"C:\Users\Valued Customer\NT8_Regimes\V3D\TradeLog\";
-        private const string LOG_FILE  = "V3D_TradeLog.csv";
+        private const string ROOT_PATH =
+            @"C:\Users\Valued Customer\NT8_Regimes\";
         private const string COLUMN_HEADER =
             "trade_date,entry_time,exit_time,symbol,bot_name,model_version," +
             "direction,contracts,entry_price,exit_price," +
@@ -81,7 +80,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         // ---------------------------------------------------------------
         // State
         // ---------------------------------------------------------------
-        private string logPath       = "";
         private string leaderSymbol  = "";
         private readonly HashSet<string> seenExecutionIds = new HashSet<string>();
 
@@ -123,10 +121,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 leaderSymbol = GetLeaderSymbol(
                     Instrument.MasterInstrument.Name.ToUpper());
 
-                string dir = BASE_PATH;
-                if (!Directory.Exists(dir))
+                string startupLogPath = GetLogPathForModel(ModelVersion);
+                string startupDir = Path.GetDirectoryName(startupLogPath);
+                if (!Directory.Exists(startupDir))
                 {
-                    try { Directory.CreateDirectory(dir); }
+                    try { Directory.CreateDirectory(startupDir); }
                     catch (Exception ex)
                     {
                         Print("TradeLogExporter: Cannot create directory — " + ex.Message);
@@ -134,11 +133,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                 }
 
-                logPath = Path.Combine(dir, LOG_FILE);
-                EnsureHeader();
+                EnsureHeader(startupLogPath);
 
                 Print("TradeLogExporter [" + leaderSymbol + " / " + BotName +
-                      "]: Ready. Log: " + logPath);
+                      "]: Ready. Log: " + startupLogPath);
 
                 lock (Account.All)
                 {
@@ -170,8 +168,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 execution.Instrument.MasterInstrument.Name.ToUpper() !=
                     Instrument.MasterInstrument.Name.ToUpper())
                 return;
-
-            if (string.IsNullOrEmpty(logPath)) return;
 
             try
             {
@@ -292,13 +288,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             string tradeDate = exitTime.ToString("yyyy-MM-dd");
             string exitTimeStr = exitTime.ToString("yyyy-MM-dd HH:mm:ss");
 
+            string accountName = execution.Account == null ? "Unknown" : execution.Account.Name;
+            string resolvedModel = ResolveModelForAccount(accountName);
+
             string line = string.Join(",",
                 tradeDate,
                 pendingEntryTime,
                 exitTimeStr,
                 leaderSymbol,
                 BotName,
-                ModelVersion,
+                resolvedModel,
                 pendingDirection,
                 pendingContracts.ToString(),
                 pendingEntryPrice.ToString("F2"),
@@ -323,11 +322,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 pendingEntrySizePct,
                 pendingEntryVelocity,
                 pendingEntryReason,
-                execution.Account == null ? "Unknown" : execution.Account.Name,
+                accountName,
                 Instrument.FullName
             );
 
-            AppendLine(line);
+            string rowLogPath = GetLogPathForModel(resolvedModel);
+            EnsureHeader(rowLogPath);
+            AppendLine(rowLogPath, line);
 
             Print(string.Format(
                 "TradeLogExporter [{0}/{1}]: {2} {3} {4}@{5:F2}→{6:F2} | " +
@@ -438,14 +439,32 @@ namespace NinjaTrader.NinjaScript.Indicators
             return o == null ? "" : o.ToString();
         }
 
-        private void EnsureHeader()
+        private static string ResolveModelForAccount(string accountName)
         {
-            if (File.Exists(logPath)) return;
+            string account = (accountName ?? "").ToUpperInvariant();
+            if (account.StartsWith("SIMV3C-NQ-")) return "V3C";
+            if (account.StartsWith("SIMV3D-NQ-")) return "V3D";
+            return "V3D";
+        }
+
+        private static string GetLogPathForModel(string model)
+        {
+            string safeModel = model == "V3C" ? "V3C" : "V3D";
+            string dir = Path.Combine(ROOT_PATH, safeModel, "TradeLog");
+            return Path.Combine(dir, safeModel + "_TradeLog.csv");
+        }
+
+        private void EnsureHeader(string path)
+        {
+            if (File.Exists(path)) return;
             try
             {
-                using (var sw = new StreamWriter(logPath, false))
+                string dir = Path.GetDirectoryName(path);
+                if (!Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+                using (var sw = new StreamWriter(path, false))
                     sw.WriteLine(COLUMN_HEADER);
-                Print("TradeLogExporter: Created " + logPath);
+                Print("TradeLogExporter: Created " + path);
             }
             catch (Exception ex)
             {
@@ -453,11 +472,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        private void AppendLine(string line)
+        private void AppendLine(string path, string line)
         {
             try
             {
-                using (var sw = new StreamWriter(logPath, true))
+                using (var sw = new StreamWriter(path, true))
                     sw.WriteLine(line);
             }
             catch (Exception ex)

@@ -100,6 +100,11 @@ logging.basicConfig(
 )
 log = logging.getLogger("HMMWatchdog_V3D")
 
+# hmmlearn can emit "Model is not converging" warnings for tiny EM likelihood
+# dips on individual restarts even when the selected restart fits and scores.
+# Keep fatal fit failures in this watchdog's own logs, but suppress that chatter.
+logging.getLogger("hmmlearn.base").setLevel(logging.ERROR)
+
 
 # ===========================================================================
 # 1. STATE PERSISTENCE — track row counts to gate refits
@@ -170,6 +175,15 @@ def resample_to_5m(df_1m: pd.DataFrame) -> pd.DataFrame:
         Volume=("Volume", "sum"),
     ).dropna(subset=["Open"])
     return r.reset_index()
+
+
+def drop_incomplete_5m_bar(df_5m: pd.DataFrame, df_1m: pd.DataFrame) -> pd.DataFrame:
+    """Remove the right-edge 5-min bar until its timestamp has actually printed."""
+    if df_5m.empty or df_1m.empty:
+        return df_5m
+
+    latest_1m_ts = df_1m["Timestamp"].max()
+    return df_5m[df_5m["Timestamp"] <= latest_1m_ts].copy()
 
 
 def compute_session_vwap(df_5m: pd.DataFrame) -> pd.Series:
@@ -434,23 +448,47 @@ def process_symbol(symbol: str, persist_state: dict) -> dict:
         log.error(f"[{symbol}] Export file not found: {export_path}")
         return persist_state
 
-    # --- Gate: only refit if MIN_NEW_BARS new data has arrived ---
-    current_row_count = sum(1 for _ in open(export_path))
-    last_fit_count    = persist_state.get(f"{symbol}_last_fit_rows", 0)
-    bars_since_fit    = current_row_count - last_fit_count
-
-    if bars_since_fit < MIN_NEW_BARS_TO_REFIT:
-        log.info(f"[{symbol}] Only {bars_since_fit} new bars since last fit "
-                 f"(need {MIN_NEW_BARS_TO_REFIT}). Skipping refit.")
-        return persist_state
-
-    log.info(f"[{symbol}] {bars_since_fit} new bars detected. Fitting HMM...")
-
     # --- Load and prepare ---
+    with open(export_path, "r") as f:
+        current_row_count = sum(1 for _ in f)
     df_raw  = load_export(export_path)
     df_rth  = filter_rth(df_raw)
+    if df_rth.empty:
+        log.warning(f"[{symbol}] No RTH rows available. Skipping.")
+        return persist_state
+
     df_roll = apply_rolling_window(df_rth)
-    df_5m   = resample_to_5m(df_roll)
+    df_5m   = drop_incomplete_5m_bar(resample_to_5m(df_roll), df_roll)
+    if df_5m.empty:
+        log.warning(f"[{symbol}] No completed 5-min bars available. Skipping.")
+        return persist_state
+
+    rth_row_count = len(df_rth)
+    last_fit_rth_rows = int(persist_state.get(f"{symbol}_last_fit_rth_rows", 0) or 0)
+    bars_since_fit = rth_row_count - last_fit_rth_rows if last_fit_rth_rows else rth_row_count
+    latest_5m_ts = pd.to_datetime(df_5m["Timestamp"].max())
+    last_fit_5m_raw = persist_state.get(f"{symbol}_last_fit_5m_ts")
+    last_fit_5m_ts = pd.to_datetime(last_fit_5m_raw) if last_fit_5m_raw else None
+
+    if last_fit_5m_ts is not None and latest_5m_ts <= last_fit_5m_ts:
+        log.info(
+            f"[{symbol}] Latest complete 5-min HMM bar unchanged "
+            f"({latest_5m_ts:%Y-%m-%d %H:%M}). Waiting for next completed bar."
+        )
+        persist_state[f"{symbol}_last_seen_raw_rows"] = current_row_count
+        persist_state[f"{symbol}_last_seen_rth_rows"] = rth_row_count
+        return persist_state
+
+    if last_fit_5m_ts is not None and bars_since_fit < MIN_NEW_BARS_TO_REFIT:
+        log.info(
+            f"[{symbol}] New completed 5-min bar detected with {bars_since_fit} "
+            f"deduped RTH 1-min rows since last fit. Fitting HMM..."
+        )
+    else:
+        log.info(
+            f"[{symbol}] New completed 5-min bar detected "
+            f"({bars_since_fit} deduped RTH 1-min rows since last fit). Fitting HMM..."
+        )
 
     n_days = df_roll["Timestamp"].dt.date.nunique()
     log.info(f"[{symbol}] Rolling window: {n_days} trading days, "
@@ -481,6 +519,8 @@ def process_symbol(symbol: str, persist_state: dict) -> dict:
 
     # --- Update state ---
     persist_state[f"{symbol}_last_fit_rows"]  = current_row_count
+    persist_state[f"{symbol}_last_fit_rth_rows"] = rth_row_count
+    persist_state[f"{symbol}_last_fit_5m_ts"] = latest_5m_ts.isoformat()
     persist_state[f"{symbol}_last_fit_ts"]    = datetime.now().isoformat()
     persist_state[f"{symbol}_last_ll"]        = round(log_likelihood, 4)
     persist_state[f"{symbol}_label_map"]      = {str(k): v for k, v in label_map.items()}

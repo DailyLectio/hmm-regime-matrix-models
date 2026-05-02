@@ -458,6 +458,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 // Gate 3: circuit breaker
                 if (consecutiveLosers >= MaxConsecutiveLosses) return;
                 // Gate 4: time
+                if (ToTime(Time[0]) >= 154500)                 return;
                 if (!IsInTime())                               return;
                 // Gate 5: IB extension bounds
                 if (ibExtensionPct < IbExtensionMin || ibExtensionPct > IbExtensionMax) return;

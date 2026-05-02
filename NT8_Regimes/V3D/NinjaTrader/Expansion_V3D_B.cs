@@ -447,6 +447,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (stateAgeBars < 2)                          return;
                 if (bricksInExpansion < WaitBricks)            return;
                 if (consecutiveLosers >= MaxConsecutiveLosses) return;
+                if (ToTime(Time[0]) >= 154500)                 return;
                 if (expansionSizePct <= 0)                     return;
 
                 // ── VERSION B GATE: velocity confirmation ──────────────────

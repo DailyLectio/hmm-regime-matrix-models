@@ -79,9 +79,9 @@ THRESHOLDS = {
 
 # Phase confidence multipliers (Section 6)
 PHASE_MULTIPLIERS = {
-    "OPENING_AUCTION":        {"trend": 0.70, "rotation": 1.10},
-    "EARLY_TEST":             {"trend": 0.80, "rotation": 1.05},
-    "FIRST_ACCEPTANCE":       {"trend": 0.90, "rotation": 1.00},
+    "OPENING_AUCTION":        {"trend": 0.80, "rotation": 1.10},
+    "EARLY_TEST":             {"trend": 0.88, "rotation": 1.05},
+    "FIRST_ACCEPTANCE":       {"trend": 0.95, "rotation": 1.00},
     "PRE_IB_MATURATION":      {"trend": 0.85, "rotation": 1.05},
     "POST_IB_MACRO":          {"trend": 1.10, "rotation": 0.95},
     "MID_MORNING_DISCOVERY":  {"trend": 1.00, "rotation": 1.00},
@@ -94,6 +94,16 @@ PHASE_MULTIPLIERS = {
 
 # Default multiplier for unknown phases
 DEFAULT_MULTIPLIERS = {"trend": 1.00, "rotation": 1.00}
+
+# Macro-only early-session thrust thresholds. This override is intentionally
+# narrow and only promotes to TREND_COMPRESSION, never TREND_EXPANSION.
+EXTREME_THRUST_THRESH = {"NQ": 1.50, "ES": 1.00}
+
+# Instrument-aware HMM weighting. NQ HMM trend blocks are late but meaningful;
+# ES HMM TrendUp/TrendDown is a session-boundary artifact, while ES Balance is
+# useful as rotation context.
+HMM_TREND_WEIGHT = {"NQ": 0.40, "ES": 0.10}
+HMM_ROTATION_WEIGHT = {"NQ": 0.30, "ES": 0.50}
 
 # Conflict threshold for TRANSITION state
 CONFLICT_THRESHOLD = 0.40
@@ -111,6 +121,10 @@ SIM_TREND_EMERGING_CONFIDENCE = 30
 
 # State persistence gate
 MIN_STATE_AGE_BARS = 2  # TREND_EXPANSION requires 2+ bars persistence
+MIN_BOT_PERMISSION_AGE_BARS = 2  # New compression/emerging labels hold Momo/Sniper briefly
+MIN_TRANSITION_EXIT_BOT_AGE_BARS = 3  # Transition exits need extra proof before Momo/Sniper resume
+REGIME_FLIP_LOOKBACK_BARS = 10
+MAX_REGIME_FLIPS_10BAR = 4
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -127,24 +141,31 @@ log = logging.getLogger("RegimeSupervisor_V3D")
 # KALMAN FILTER — smooths TrendExpansionScore
 # ===========================================================================
 
+def get_kalman_params(phase: str) -> dict:
+    """Return phase-specific Kalman Q/R values."""
+    if phase in ("OPENING_AUCTION", "EARLY_TEST"):
+        return {"Q": 0.12, "R": 0.10}
+    if phase == "FIRST_ACCEPTANCE":
+        return {"Q": 0.08, "R": 0.12}
+    return {"Q": 0.05, "R": 0.15}
+
+
 class KalmanScoreFilter:
     """
     Single-state Kalman filter for smoothing regime confidence scores.
-    Default parameters from Section 6.
+    Parameters are updated per phase before each observation.
     """
-    def __init__(self, Q: float = 0.15, R: float = 0.15):
-        # Q=0.15 (process noise) — tuned 2026-04-28 to reduce regime-transition lag.
-        # Original Q=0.05 caused 3-4 bar (~15-20 min) delay recognising trend days
-        # when Kalman entered from low-score rotation (score ~23). With Q=0.15 the
-        # filter reaches TREND_COMPRESSION threshold (60) within 1 bar of a valid
-        # raw score signal, and TREND_EXPANSION (70) within 2 bars.
-        # R=0.15 (observation noise) unchanged — noise floor calibration remains valid.
-        # Rollback: revert Q to 0.05 if false-positive trend calls increase materially
-        # in back-validation or if intraday rotation noise bleeds into TREND_COMPRESSION.
+    def __init__(self, Q: float = 0.05, R: float = 0.15):
+        # Q/R are set dynamically by phase before each observation.
         self.Q = Q  # Process noise
         self.R = R  # Observation noise
         self.x = 0.5  # Initial state (neutral)
         self.P = 1.0  # Initial uncertainty
+
+    def set_params(self, params: Dict[str, float]) -> None:
+        """Update Q/R without resetting the filter state."""
+        self.Q = float(params.get("Q", self.Q))
+        self.R = float(params.get("R", self.R))
 
     def update(self, z: float) -> float:
         """Update filter with new observation z, return smoothed estimate."""
@@ -192,30 +213,56 @@ def load_hmm_regimes(symbol: str) -> pd.DataFrame:
 
 def merge_stages(macro_df: pd.DataFrame, hmm_df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     """
-    Merge Stage A and Stage B on session_key.
+    Merge Stage A checkpoints with the most recent non-stale Stage B HMM row.
     Returns unified DataFrame with all input columns plus derived metrics.
     """
-    # Merge on session_key (deterministic join)
-    merged = macro_df.merge(
-        hmm_df,
-        on="session_key",
-        how="inner",
-        suffixes=("_macro", "_hmm")
+    macro = macro_df.copy()
+    hmm = hmm_df.copy()
+
+    macro["_join_dt"] = pd.to_datetime(
+        macro["trade_date"].astype(str) + " " + macro["checkpoint_time"].astype(str),
+        errors="coerce",
     )
-    
-    log.info(f"[{symbol}] Merged {len(merged)} rows (macro {len(macro_df)}, hmm {len(hmm_df)})")
-    
-    # Resolve duplicate columns (prefer macro for shared fields)
-    if "TimestampET_macro" in merged.columns:
-        merged["TimestampET"] = merged["TimestampET_macro"]
-        merged.drop(columns=["TimestampET_macro", "TimestampET_hmm"], inplace=True, errors="ignore")
-    
-    if "Symbol_macro" in merged.columns:
-        merged["Symbol"] = merged["Symbol_macro"]
-        merged.drop(columns=["Symbol_macro", "Symbol_hmm"], inplace=True, errors="ignore")
-    
-    # Sort by timestamp
-    merged["TimestampET"] = pd.to_datetime(merged["TimestampET"])
+    hmm["_join_dt"] = pd.to_datetime(hmm["TimestampET"], errors="coerce")
+    hmm["HMM_TimestampET"] = hmm["TimestampET"]
+
+    macro_bad = macro["_join_dt"].isna().sum()
+    hmm_bad = hmm["_join_dt"].isna().sum()
+    if macro_bad:
+        log.warning(f"[{symbol}] Dropping {macro_bad} macro rows with invalid checkpoint timestamps")
+    if hmm_bad:
+        log.warning(f"[{symbol}] Dropping {hmm_bad} HMM rows with invalid timestamps")
+
+    macro = macro.dropna(subset=["_join_dt"]).sort_values("_join_dt")
+    hmm = hmm.dropna(subset=["_join_dt"]).sort_values("_join_dt")
+
+    hmm_lookup = hmm.drop(columns=["session_key", "TimestampET"], errors="ignore")
+    merged = pd.merge_asof(
+        macro,
+        hmm_lookup,
+        on="_join_dt",
+        direction="backward",
+        tolerance=pd.Timedelta("10min"),
+    )
+
+    unmatched = merged["RegimeLabel"].isna().sum() if "RegimeLabel" in merged.columns else len(merged)
+    if unmatched:
+        log.warning(f"[{symbol}] Dropping {unmatched} macro rows with no HMM reading within 10 minutes")
+        merged = merged.dropna(subset=["RegimeLabel"])
+
+    # Macro checkpoint drives the output timestamp; HMM_TimestampET records the
+    # as-of lookup source for diagnostics.
+    merged["TimestampET"] = merged["_join_dt"]
+    merged["HMMJoinLagMinutes"] = (
+        merged["TimestampET"] - pd.to_datetime(merged["HMM_TimestampET"], errors="coerce")
+    ).dt.total_seconds() / 60.0
+    merged.drop(columns=["_join_dt"], inplace=True, errors="ignore")
+
+    log.info(
+        f"[{symbol}] As-of merged {len(merged)} rows "
+        f"(macro {len(macro_df)}, hmm {len(hmm_df)}, tolerance 10min)"
+    )
+
     merged.sort_values("TimestampET", inplace=True)
     merged.reset_index(drop=True, inplace=True)
     
@@ -225,6 +272,48 @@ def merge_stages(macro_df: pd.DataFrame, hmm_df: pd.DataFrame, symbol: str) -> p
 # ===========================================================================
 # SCORING FUNCTIONS
 # ===========================================================================
+
+def hmm_trend_scale(symbol: str) -> float:
+    """Scale HMM trend contribution relative to the NQ baseline."""
+    baseline = HMM_TREND_WEIGHT["NQ"]
+    return HMM_TREND_WEIGHT.get(symbol, baseline) / baseline
+
+
+def hmm_trend_is_reliable(symbol: str) -> bool:
+    """Whether HMM trend labels can independently support trend classification."""
+    return HMM_TREND_WEIGHT.get(symbol, HMM_TREND_WEIGHT["NQ"]) >= 0.25
+
+
+def hmm_regime_direction(hmm_regime: str) -> str:
+    if hmm_regime == "TrendUp":
+        return "LONG"
+    if hmm_regime == "TrendDown":
+        return "SHORT"
+    return "NEUTRAL"
+
+
+def determine_direction(row: pd.Series, symbol: str) -> str:
+    """Prefer macro direction; only use HMM direction for instruments where it is reliable."""
+    macro_bias = row.get("official_bias_label", "")
+    if macro_bias in ("LONG", "SHORT"):
+        return macro_bias
+
+    hmm_direction = hmm_regime_direction(row.get("RegimeLabel", ""))
+    if hmm_trend_is_reliable(symbol) and hmm_direction != "NEUTRAL":
+        return hmm_direction
+
+    return "NEUTRAL"
+
+
+def hmm_confirms_macro_direction(row: pd.Series, symbol: str) -> bool:
+    """Return True only when a reliable HMM trend agrees with macro direction."""
+    if not hmm_trend_is_reliable(symbol):
+        return False
+
+    macro_bias = row.get("official_bias_label", "")
+    hmm_direction = hmm_regime_direction(row.get("RegimeLabel", ""))
+    return macro_bias in ("LONG", "SHORT") and macro_bias == hmm_direction
+
 
 def compute_trend_expansion_score(row: pd.Series, symbol: str) -> float:
     """
@@ -260,13 +349,14 @@ def compute_trend_expansion_score(row: pd.Series, symbol: str) -> float:
     # Component 4: HMM directional agreement (15 points max)
     hmm_regime = row.get("RegimeLabel", "")
     official_bias = row.get("official_bias_label", "")
+    hmm_scale = hmm_trend_scale(symbol)
     
     if hmm_regime in ["TrendUp", "TrendDown"]:
         if (hmm_regime == "TrendUp" and official_bias == "LONG") or \
            (hmm_regime == "TrendDown" and official_bias == "SHORT"):
-            score += 15
+            score += 15 * hmm_scale
         else:
-            score += 5  # Partial credit for HMM trend but wrong direction
+            score += 5 * hmm_scale  # Partial credit for HMM trend but wrong direction
     
     # Component 5: Directional efficiency (10 points max)
     de = row.get("de_effective", 0.0)
@@ -278,7 +368,7 @@ def compute_trend_expansion_score(row: pd.Series, symbol: str) -> float:
     return min(100.0, score)
 
 
-def compute_conflict_score(row: pd.Series) -> float:
+def compute_conflict_score(row: pd.Series, symbol: str) -> float:
     """
     Compute ConflictScore: degree of disagreement between macro and HMM.
     Returns 0.0 (perfect agreement) to 1.0 (maximum conflict).
@@ -288,18 +378,19 @@ def compute_conflict_score(row: pd.Series) -> float:
     # Conflict 1: Macro says TREND, HMM says Balance (strong conflict)
     macro_regime = row.get("official_regime_label", "")
     hmm_regime = row.get("RegimeLabel", "")
+    trend_scale = min(1.0, hmm_trend_scale(symbol))
     
     if macro_regime == "TREND" and hmm_regime == "Balance":
-        conflict += 0.40
+        conflict += 0.40 * trend_scale
     elif macro_regime == "BALANCE" and hmm_regime in ["TrendUp", "TrendDown"]:
-        conflict += 0.40
+        conflict += 0.40 * trend_scale
     
     # Conflict 2: Directional disagreement (moderate conflict)
     macro_bias = row.get("official_bias_label", "")
     if macro_regime == "TREND" and hmm_regime in ["TrendUp", "TrendDown"]:
         if (macro_bias == "LONG" and hmm_regime == "TrendDown") or \
            (macro_bias == "SHORT" and hmm_regime == "TrendUp"):
-            conflict += 0.30
+            conflict += 0.30 * trend_scale
     
     # Conflict 3: Macro ROTATION but low two-sided evidence (minor conflict)
     if macro_regime == "ROTATION":
@@ -310,7 +401,7 @@ def compute_conflict_score(row: pd.Series) -> float:
     # Conflict 4: High HMM flip rate (state instability)
     flip_rate = row.get("HMM_FlipRate_5bar", 0.0)
     if flip_rate > 0.60:
-        conflict += 0.15
+        conflict += 0.15 * trend_scale
     
     return min(1.0, conflict)
 
@@ -335,6 +426,41 @@ def apply_phase_multipliers(
     rotation_threshold = rotation_base / mult["rotation"]
     
     return trend_threshold, rotation_threshold
+
+
+def extreme_thrust_override(phase: str, macro_row: pd.Series, symbol: str):
+    """
+    Macro-only early-session override for extreme opening thrusts.
+    Returns a conservative TREND_COMPRESSION classification or None.
+    """
+    if phase not in ("OPENING_AUCTION", "EARLY_TEST"):
+        return None
+
+    try:
+        nm = float(macro_row.get("net_move_since_open_atr", 0.0))
+    except Exception:
+        nm = 0.0
+    try:
+        vel = float(macro_row.get("velocity_3cp_atr", 0.0))
+    except Exception:
+        vel = 0.0
+
+    if pd.isna(nm):
+        nm = 0.0
+    if pd.isna(vel):
+        vel = 0.0
+
+    thresh = EXTREME_THRUST_THRESH.get(symbol, 1.50)
+    if abs(nm) >= thresh and abs(vel) >= thresh * 0.60:
+        direction = "LONG" if nm > 0 else "SHORT"
+        return {
+            "FinalRegime": "TREND_COMPRESSION",
+            "FinalDirection": direction,
+            "RegimeConfidence": 50,
+            "OverrideSource": "EXTREME_THRUST",
+        }
+
+    return None
 
 
 # ===========================================================================
@@ -378,13 +504,9 @@ def classify_final_regime(
         else MIN_TREND_EMERGING_CONFIDENCE
     )
     
-    # Determine direction
-    if macro_bias == "LONG" or hmm_regime == "TrendUp":
-        direction = "LONG"
-    elif macro_bias == "SHORT" or hmm_regime == "TrendDown":
-        direction = "SHORT"
-    else:
-        direction = "NEUTRAL"
+    # Determine direction. ES ignores HMM-only direction because its trend
+    # labels are session-boundary artifacts; NQ can still use HMM direction.
+    direction = determine_direction(row, symbol)
     
     # PRIORITY 1: TRANSITION (danger override)
     if conflict_score >= CONFLICT_THRESHOLD:
@@ -401,12 +523,14 @@ def classify_final_regime(
                 # Downgrade to compression until persistence confirmed
                 confidence = int(kalman_score * 0.85)
                 return "TREND_COMPRESSION", direction, confidence, "AWAITING_PERSISTENCE"
-        elif macro_regime == "TREND" and hmm_regime in ["TrendUp", "TrendDown"]:
+        elif macro_regime == "TREND" and hmm_confirms_macro_direction(row, symbol):
             confidence = int(kalman_score * 0.90)
             return "TREND_EXPANSION", direction, confidence, "MACRO_HMM_AGREE"
     
     # PRIORITY 3: TREND_COMPRESSION
-    if macro_regime == "TREND" or hmm_regime in ["TrendUp", "TrendDown"]:
+    if macro_regime == "TREND" or (
+            hmm_trend_is_reliable(symbol)
+            and hmm_regime in ["TrendUp", "TrendDown"]):
         if kalman_score >= compression_threshold:
             confidence = int(kalman_score * 0.80)
             return "TREND_COMPRESSION", direction, confidence, "DIRECTIONAL_MODERATE"
@@ -420,17 +544,23 @@ def classify_final_regime(
     # AND macro_regime == "TREND" AND hmm_regime in [TrendUp, TrendDown]
     # AND direction is not NEUTRAL (both layers agree directionally)
     if (macro_regime == "TREND"
-            and hmm_regime in ["TrendUp", "TrendDown"]
             and direction != "NEUTRAL"
-            and kalman_score >= emerging_threshold):
+            and kalman_score >= emerging_threshold
+            and (symbol == "ES" or hmm_confirms_macro_direction(row, symbol))):
         confidence = max(25, int(kalman_score * 0.70))  # Conservative scout floor
-        return "TREND_EMERGING", direction, confidence, "EMERGING_SIGNAL"
+        reason = "ES_MACRO_EMERGING" if symbol == "ES" else "EMERGING_SIGNAL"
+        return "TREND_EMERGING", direction, confidence, reason
 
     # PRIORITY 5: ROTATION_LIQUID
     if two_sided == 1 and ib_width_atr >= 1.5:
         if playbook_state in ["ROTATION_LIQUID", "ROTATION_CHOP"]:
-            confidence = max(55, int(70 - conflict_score * 30))
-            return "ROTATION_LIQUID", "NEUTRAL", confidence, "TWO_SIDED_CONFIRMED"
+            rotation_boost = 0
+            reason = "TWO_SIDED_CONFIRMED"
+            if macro_regime == "ROTATION" and hmm_regime == "Balance":
+                rotation_boost = int(20 * HMM_ROTATION_WEIGHT.get(symbol, 0.30))
+                reason = "HMM_BALANCE_ROTATION_CONFIRMED"
+            confidence = max(55, min(90, int(70 - conflict_score * 30 + rotation_boost)))
+            return "ROTATION_LIQUID", "NEUTRAL", confidence, reason
 
     # PRIORITY 6: ROTATION_ILLIQUID (default fallback)
     return "ROTATION_ILLIQUID", "NEUTRAL", 40, "LOW_CONVICTION"
@@ -440,15 +570,65 @@ def classify_final_regime(
 # BOT PERMISSIONS AND SIZING
 # ===========================================================================
 
-def compute_bot_permissions(final_regime: str, conflict_score: float, sim_test: bool = False) -> Dict[str, int]:
+def compute_bot_permission_gate_reason(
+    final_regime: str,
+    state_age: int = 0,
+    prev_regime: str = None,
+    flip_count_10bar: int = 0
+) -> str:
+    """Return diagnostic tags for supervisor-level bot permission gates."""
+    reasons = []
+    if flip_count_10bar >= MAX_REGIME_FLIPS_10BAR:
+        reasons.append("CHOPPY_REGIME_FLIPS")
+    if (
+        state_age < MIN_BOT_PERMISSION_AGE_BARS
+        and final_regime in ("TREND_COMPRESSION", "TREND_EMERGING")
+    ):
+        reasons.append("REGIME_PERMISSION_COOLDOWN")
+    if (
+        prev_regime == "TRANSITION"
+        and final_regime != "TRANSITION"
+        and state_age < MIN_TRANSITION_EXIT_BOT_AGE_BARS
+    ):
+        reasons.append("TRANSITION_EXIT_COOLDOWN")
+    return "|".join(reasons) if reasons else "NONE"
+
+
+def compute_bot_permissions(
+    final_regime: str,
+    final_direction: str,
+    hmm_regime: str,
+    conflict_score: float,
+    state_age: int = 0,
+    prev_regime: str = None,
+    flip_count_10bar: int = 0,
+    sim_test: bool = False
+) -> Dict[str, int]:
     """
     Map FinalRegime to bot permission flags.
     Returns dict with Allow{Bot} and {Bot}SizePct keys.
+
+    V3D Fader uses the Pine permission/size lane. In TREND_EXPANSION that lane
+    only opens when HMM confirms the expansion direction; the directional fade
+    flags decide which counter-trend side can actually trade.
+
+    state_age is the number of consecutive bars this final regime label has
+    persisted. Brand-new trend labels hold Momo/Sniper back to reduce whipsaw
+    entries during regime transitions.
     """
+    hmm_confirms_expansion = (
+        final_regime == "TREND_EXPANSION"
+        and final_direction in ("LONG", "SHORT")
+        and hmm_regime_direction(hmm_regime) == final_direction
+    )
+    gate_reason = compute_bot_permission_gate_reason(
+        final_regime, state_age, prev_regime, flip_count_10bar
+    )
+    
     # Base permission table (Section 6)
     BOT_PERMISSIONS = {
         "TREND_EXPANSION": {
-            "AllowExpansion": 1, "AllowMomo": 1, "AllowPine": 0,
+            "AllowExpansion": 1, "AllowMomo": 1, "AllowPine": int(hmm_confirms_expansion),
             "AllowADX_DI": 0, "AllowSniper": 0,
         },
         "TREND_COMPRESSION": {
@@ -485,6 +665,14 @@ def compute_bot_permissions(final_regime: str, conflict_score: float, sim_test: 
     # Special case: Pine only in TREND_COMPRESSION if conflict < 0.35
     if final_regime == "TREND_COMPRESSION" and conflict_score >= 0.35:
         perms["AllowPine"] = 0
+
+    if "REGIME_PERMISSION_COOLDOWN" in gate_reason or "TRANSITION_EXIT_COOLDOWN" in gate_reason:
+        perms["AllowMomo"] = 0
+        perms["AllowSniper"] = 0
+    
+    if "CHOPPY_REGIME_FLIPS" in gate_reason:
+        for key in perms:
+            perms[key] = 0
     
     return perms
 
@@ -532,7 +720,14 @@ def compute_directional_permissions(
         elif final_direction == "SHORT":
             perms["AllowShort"] = 1
 
-    # Fading permissions (Pine, ADX_DI in rotation)
+    # Expansion-fade permissions: fade the confirmed expansion direction only.
+    if final_regime == "TREND_EXPANSION" and hmm_regime_direction(hmm_regime) == final_direction:
+        if final_direction == "LONG":
+            perms["AllowFadeShort"] = 1
+        elif final_direction == "SHORT":
+            perms["AllowFadeLong"] = 1
+
+    # Rotation fade permissions remain bidirectional.
     if final_regime == "ROTATION_LIQUID":
         # Bidirectional fading allowed
         perms["AllowFadeLong"] = 1
@@ -659,7 +854,7 @@ def process_symbol(
     merged = merge_stages(macro_df, hmm_df, symbol)
     
     if merged.empty:
-        log.warning(f"[{symbol}] No merged data after join. Check session_key alignment.")
+        log.warning(f"[{symbol}] No merged data after as-of HMM lookup.")
         return pd.DataFrame()
     
     # Initialize Kalman filter (one per session)
@@ -668,7 +863,9 @@ def process_symbol(
     
     # Track state age for persistence gate
     prev_regime = None
+    prev_regime_before_current = None
     state_age = 0
+    regime_flip_history = []
     
     # Output rows
     output_rows = []
@@ -682,29 +879,69 @@ def process_symbol(
             kalman_filter.reset()
             current_date = trade_date
             prev_regime = None
+            prev_regime_before_current = None
             state_age = 0
+            regime_flip_history = []
         
         # Compute scores
+        phase = row.get("phase", "UNKNOWN")
+        kalman_filter.set_params(get_kalman_params(phase))
+        override = extreme_thrust_override(phase, row, symbol)
         raw_trend_score = compute_trend_expansion_score(row, symbol)
         kalman_score = kalman_filter.update(raw_trend_score)
-        conflict_score = compute_conflict_score(row)
+        conflict_score = compute_conflict_score(row, symbol)
         
         # Classify final regime
-        final_regime, final_direction, regime_confidence, reason_code = \
-            classify_final_regime(
-                row, kalman_score, conflict_score, symbol,
-                prev_regime, state_age, sim_test
-            )
+        if override is not None:
+            final_regime = override["FinalRegime"]
+            final_direction = override["FinalDirection"]
+            regime_confidence = override["RegimeConfidence"]
+            reason_code = override["OverrideSource"]
+            override_source = override["OverrideSource"]
+        else:
+            final_regime, final_direction, regime_confidence, reason_code = \
+                classify_final_regime(
+                    row, kalman_score, conflict_score, symbol,
+                    prev_regime, state_age, sim_test
+                )
+            override_source = ""
         
-        # Update state age
+        # Update state age and short-window flip count
+        prior_regime = prev_regime
+        is_regime_flip = prior_regime is not None and final_regime != prior_regime
+        regime_flip_history.append(1 if is_regime_flip else 0)
+        if len(regime_flip_history) > REGIME_FLIP_LOOKBACK_BARS:
+            regime_flip_history.pop(0)
+        flip_count_10bar = sum(regime_flip_history)
+
         if final_regime == prev_regime:
             state_age += 1
         else:
             state_age = 1
+            prev_regime_before_current = prior_regime
             prev_regime = final_regime
         
         # Compute bot permissions
-        bot_perms = compute_bot_permissions(final_regime, conflict_score, sim_test)
+        bot_perms = compute_bot_permissions(
+            final_regime, final_direction, row.get("RegimeLabel", ""),
+            conflict_score, state_age,
+            prev_regime_before_current, flip_count_10bar, sim_test
+        )
+        if override_source == "EXTREME_THRUST":
+            bot_perms["AllowExpansion"] = 0
+            bot_perms["AllowMomo"] = 1
+            bot_perms["AllowPine"] = 0
+            bot_perms["AllowADX_DI"] = 0
+            bot_perms["AllowSniper"] = 1
+        bot_gate_reason = compute_bot_permission_gate_reason(
+            final_regime, state_age, prev_regime_before_current, flip_count_10bar
+        )
+        if "REGIME_PERMISSION_COOLDOWN" in bot_gate_reason or "TRANSITION_EXIT_COOLDOWN" in bot_gate_reason:
+            bot_perms["AllowMomo"] = 0
+            bot_perms["AllowSniper"] = 0
+        if "CHOPPY_REGIME_FLIPS" in bot_gate_reason:
+            for key in bot_perms:
+                bot_perms[key] = 0
         dir_perms = compute_directional_permissions(
             final_regime, final_direction,
             row.get("official_bias_label", ""),
@@ -721,6 +958,8 @@ def process_symbol(
             final_regime, final_direction, reason_code,
             bot_perms, dir_perms, size_values
         )
+        if bot_gate_reason != "NONE" and blocked_reason != "NONE":
+            blocked_reason = f"{blocked_reason}|{bot_gate_reason}"
         
         # Build output row
         output_row = {
@@ -738,6 +977,8 @@ def process_symbol(
             "HMMRegime": row.get("RegimeLabel", ""),
             "HMMDirection": "LONG" if row.get("RegimeLabel") == "TrendUp" else
                            "SHORT" if row.get("RegimeLabel") == "TrendDown" else "NEUTRAL",
+            "HMMAsOfTimestampET": row.get("HMM_TimestampET", ""),
+            "HMMJoinLagMinutes": round(clean_number(row.get("HMMJoinLagMinutes", 0.0)), 2),
             "SuggestedAdxMin": int(clean_number(row.get("SuggestedAdxMin", 0), 0)),
             "SuggestedCiMax": int(clean_number(row.get("SuggestedCiMax", 0), 0)),
             "SuggestedSlopeGate": clean_number(row.get("SuggestedSlopeGate", 0.0), 0.0),
@@ -785,12 +1026,15 @@ def process_symbol(
             
             # Diagnostics / metadata
             "ReasonCode": reason_code,
+            "OverrideSource": override_source,
             "BlockedReason": blocked_reason,
+            "BotPermissionGateReason": bot_gate_reason,
             "BotPermissionSummary": bot_summary,
             "AnyDirectionalBotAllowed": any_directional,
             "AnySizePctPositive": any_size_positive,
             "SimTestingMode": 1 if sim_test else 0,
             "StateAgeBars": state_age,
+            "RegimeFlipCount10Bar": flip_count_10bar,
             "StaleDataFlag": 0,  # Always fresh in batch mode
         }
         
@@ -859,10 +1103,15 @@ def write_output(
             if existing_header == list(last_row.columns):
                 last_row.to_csv(history_path, mode='a', header=False, index=False)
             else:
-                existing = pd.read_csv(history_path)
-                combined = pd.concat([existing, last_row], ignore_index=True, sort=False)
+                new_header = list(last_row.columns)
+                extra_cols = [c for c in existing_header if c not in new_header]
+                canonical_header = new_header + extra_cols
+                existing = pd.read_csv(history_path, dtype=str, low_memory=False)
+                existing = existing.reindex(columns=canonical_header)
+                aligned_last_row = last_row.reindex(columns=canonical_header)
+                combined = pd.concat([existing, aligned_last_row], ignore_index=True, sort=False)
                 combined.to_csv(history_path, index=False)
-                log.info(f"[{symbol}] History schema expanded: {history_path}")
+                log.info(f"[{symbol}] History schema aligned: {history_path}")
         else:
             last_row.to_csv(history_path, index=False)
 
