@@ -6,6 +6,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$env:GIT_TERMINAL_PROMPT = '0'
+$env:GCM_INTERACTIVE = 'Never'
 
 $logDir = Join-Path $env:LOCALAPPDATA 'hmm-regime-matrix-backup'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
