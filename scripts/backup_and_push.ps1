@@ -26,22 +26,22 @@ try {
     Push-Location $RepoRoot
     try {
         if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot '.git'))) {
-            git init | Out-Null
-            git branch -M $Branch | Out-Null
+            git init 1>$null 2>$null
+            git branch -M $Branch 1>$null 2>$null
         }
 
         $existingRemote = git remote get-url $RemoteName 2>$null
         if (-not $existingRemote) {
-            git remote add $RemoteName $RemoteUrl
+            git remote add $RemoteName $RemoteUrl 1>$null 2>$null
         }
 
-        git add --all
+        git add --all 1>$null 2>$null
         git diff --cached --quiet
         $hasStagedChanges = ($LASTEXITCODE -ne 0)
 
         if ($hasStagedChanges) {
             $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-            git commit -m "Automated HMM Regime Matrix backup $stamp" | Out-Null
+            git commit -m "Automated HMM Regime Matrix backup $stamp" 1>$null 2>$null
             Write-BackupLog 'Backup committed.'
         }
         else {
@@ -50,7 +50,7 @@ try {
 
         git rev-parse --verify HEAD | Out-Null
         if ($LASTEXITCODE -eq 0) {
-            git push -u $RemoteName $Branch | Out-Null
+            git push -u $RemoteName $Branch 1>$null 2>$null
             Write-BackupLog 'Backup pushed.'
         }
     }
