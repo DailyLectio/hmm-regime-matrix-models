@@ -22,6 +22,38 @@ function Write-BackupLog {
     Add-Content -LiteralPath $logFile -Value $line
 }
 
+function Invoke-GitQuiet {
+    param([Parameter(Mandatory = $true)][string[]]$GitArgs)
+
+    $oldErrorActionPreference = $ErrorActionPreference
+    try {
+        $script:ErrorActionPreference = 'Continue'
+        & git @GitArgs 1>$null 2>$null
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $script:ErrorActionPreference = $oldErrorActionPreference
+    }
+
+    if ($exitCode -ne 0) {
+        throw "git $($GitArgs -join ' ') failed with exit code $exitCode"
+    }
+}
+
+function Invoke-GitQuietExitCode {
+    param([Parameter(Mandatory = $true)][string[]]$GitArgs)
+
+    $oldErrorActionPreference = $ErrorActionPreference
+    try {
+        $script:ErrorActionPreference = 'Continue'
+        & git @GitArgs 1>$null 2>$null
+        return $LASTEXITCODE
+    }
+    finally {
+        $script:ErrorActionPreference = $oldErrorActionPreference
+    }
+}
+
 try {
     Write-BackupLog 'Starting backup.'
     & (Join-Path $PSScriptRoot 'sync_backup.ps1') -RepoRoot $RepoRoot
@@ -29,31 +61,34 @@ try {
     Push-Location $RepoRoot
     try {
         if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot '.git'))) {
-            git init 1>$null 2>$null
-            git branch -M $Branch 1>$null 2>$null
+            Invoke-GitQuiet -GitArgs @('init')
+            Invoke-GitQuiet -GitArgs @('branch', '-M', $Branch)
         }
 
         $existingRemote = git remote get-url $RemoteName 2>$null
         if (-not $existingRemote) {
-            git remote add $RemoteName $RemoteUrl 1>$null 2>$null
+            Invoke-GitQuiet -GitArgs @('remote', 'add', $RemoteName, $RemoteUrl)
         }
 
-        git add --all 1>$null 2>$null
-        git diff --cached --quiet
-        $hasStagedChanges = ($LASTEXITCODE -ne 0)
+        Invoke-GitQuiet -GitArgs @('add', '--all')
+        $diffExitCode = Invoke-GitQuietExitCode -GitArgs @('diff', '--cached', '--quiet')
+        if ($diffExitCode -ne 0 -and $diffExitCode -ne 1) {
+            throw "git diff --cached --quiet failed with exit code $diffExitCode"
+        }
+        $hasStagedChanges = ($diffExitCode -eq 1)
 
         if ($hasStagedChanges) {
             $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-            git commit -m "Automated HMM Regime Matrix backup $stamp" 1>$null 2>$null
+            Invoke-GitQuiet -GitArgs @('commit', '-m', "Automated HMM Regime Matrix backup $stamp")
             Write-BackupLog 'Backup committed.'
         }
         else {
             Write-BackupLog 'No changes to commit.'
         }
 
-        git rev-parse --verify HEAD | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            git push -u $RemoteName $Branch 1>$null 2>$null
+        $hasHead = Invoke-GitQuietExitCode -GitArgs @('rev-parse', '--verify', 'HEAD')
+        if ($hasHead -eq 0) {
+            Invoke-GitQuiet -GitArgs @('push', '-u', $RemoteName, $Branch)
             Write-BackupLog 'Backup pushed.'
         }
     }
