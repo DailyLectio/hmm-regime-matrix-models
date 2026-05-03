@@ -2,6 +2,21 @@
 HMMWatchdog_V3D.py — Stage B of the V3D Institutional Regime Matrix
 MODIFIED VERSION with --full-history flag
 
+Phase One Report amendments (2026-05-03):
+  Part 2 — Feature standardisation restored (z-score before fitting).
+    The V3D pipeline had dropped the standardisation step present in the legacy
+    HMM_Watchdog.py, causing Range and Returns (scale ~0.001-0.01) to be
+    dominated by Vol_Z and vwap_dist_atr (scale ~-2 to +3). This distorted
+    the Gaussian covariance estimate and produced centroid collapse, resulting
+    in 75.7% of session bars labelled as Transition on 2026-04-30.
+  Part 2 — Label assignment confidence guard.
+    assign_labels() now checks the TrendUp/TrendDown vwap_dist_atr separation.
+    If separation < LABEL_VWAP_MIN_SEPARATION (default 0.10 z-score units),
+    a LABEL CONFIDENCE WARNING is logged and LabelAmbiguousFit=1 is written
+    to the output CSV for the supervisor to consume.
+  New output columns (appended, not replacing): LabelAmbiguousFit,
+    LabelVwapSeparation.
+
 Fits a 4-state Hidden Markov Model. Can operate in two modes:
   1. Rolling window (60 days) — for live operation
   2. Full history — for initial batch processing
@@ -100,6 +115,11 @@ logging.basicConfig(
 )
 log = logging.getLogger("HMMWatchdog_V3D")
 
+# hmmlearn can emit "Model is not converging" warnings for tiny EM likelihood
+# dips on individual restarts even when the selected restart fits and scores.
+# Keep fatal fit failures in this watchdog's own logs, but suppress that chatter.
+logging.getLogger("hmmlearn.base").setLevel(logging.ERROR)
+
 
 # ===========================================================================
 # 1. STATE PERSISTENCE — track row counts to gate refits
@@ -172,6 +192,15 @@ def resample_to_5m(df_1m: pd.DataFrame) -> pd.DataFrame:
     return r.reset_index()
 
 
+def drop_incomplete_5m_bar(df_5m: pd.DataFrame, df_1m: pd.DataFrame) -> pd.DataFrame:
+    """Remove the right-edge 5-min bar until its timestamp has actually printed."""
+    if df_5m.empty or df_1m.empty:
+        return df_5m
+
+    latest_1m_ts = df_1m["Timestamp"].max()
+    return df_5m[df_5m["Timestamp"] <= latest_1m_ts].copy()
+
+
 def compute_session_vwap(df_5m: pd.DataFrame) -> pd.Series:
     """Session VWAP reset at each new trading date."""
     df = df_5m.copy()
@@ -226,10 +255,48 @@ def build_feature_matrix(df_5m: pd.DataFrame) -> pd.DataFrame:
 # 3. HMM FITTING
 # ===========================================================================
 
-def fit_hmm(X: np.ndarray) -> tuple[hmm.GaussianHMM, float]:
+# Phase One Report Part 2 — Feature standardisation minimum separation.
+# When the mean vwap_dist_atr of the best TrendUp/TrendDown candidate is
+# closer to zero than this threshold (in z-score space after scaling), the
+# labeler flags the fit as ambiguous.  The label is still assigned (the HMM
+# must produce *something*), but a diagnostic is emitted and the StateMargin
+# in the output is reduced so the supervisor can detect soft drift.
+LABEL_VWAP_MIN_SEPARATION = 0.10   # z-score units
+
+
+def standardize_features(X: np.ndarray) -> tuple:
     """
-    Fit N_RESTARTS Gaussian HMMs, return the best (highest log-likelihood).
+    Z-score standardise the feature matrix before HMM fitting.
+
+    Phase One Report Part 2 — Recommended Change:
+    The legacy HMM_Watchdog.py standardises features before fitting, but V3D
+    dropped this step, causing features on different scales (Range ~0.001–0.01
+    vs Vol_Z ~-2 to +3 vs vwap_dist_atr ~-2 to +2) to distort the Gaussian
+    covariance estimate.  The result is that low-variance features (Range,
+    Returns) contribute negligibly to cluster assignment, and the four HMM
+    states collapse into noisy clusters dominated by Vol_Z and vwap_dist_atr.
+    This produces the 75.7% Transition over-labeling observed on 2026-04-30.
+
+    Returns (X_scaled, means, stds).
     """
+    means = X.mean(axis=0)
+    stds = X.std(axis=0)
+    stds[stds < 1e-12] = 1.0   # prevent division by zero on constant columns
+    X_scaled = (X - means) / stds
+    return X_scaled, means, stds
+
+
+def fit_hmm(X: np.ndarray) -> tuple:
+    """
+    Fit N_RESTARTS Gaussian HMMs on STANDARDISED features, return the best
+    (highest log-likelihood).
+
+    Returns (best_model, best_score, scaler_means, scaler_stds).
+    The scaler params are needed by assign_labels to map z-scored cluster
+    means back to natural-unit sign checks.
+    """
+    X_scaled, sc_means, sc_stds = standardize_features(X)
+
     best_model  = None
     best_score  = -np.inf
 
@@ -242,8 +309,8 @@ def fit_hmm(X: np.ndarray) -> tuple[hmm.GaussianHMM, float]:
             verbose=False,
         )
         try:
-            model.fit(X)
-            score = model.score(X)
+            model.fit(X_scaled)
+            score = model.score(X_scaled)
             if score > best_score:
                 best_score = score
                 best_model = model
@@ -252,14 +319,16 @@ def fit_hmm(X: np.ndarray) -> tuple[hmm.GaussianHMM, float]:
 
     if best_model is None:
         raise RuntimeError("All HMM fit attempts failed.")
-    return best_model, best_score
+    return best_model, best_score, sc_means, sc_stds
 
 
 # ===========================================================================
 # 4. LABEL ASSIGNMENT — anchored, not return-sort
 # ===========================================================================
 
-def assign_labels(model: hmm.GaussianHMM, feature_names: list) -> dict:
+def assign_labels(model: hmm.GaussianHMM, feature_names: list,
+                  scaler_means: np.ndarray = None,
+                  scaler_stds: np.ndarray = None) -> tuple:
     """
     Assign semantic labels to HMM states using the combined criterion:
         TrendUp:   highest mean return AND positive mean vwap_dist_atr
@@ -267,14 +336,32 @@ def assign_labels(model: hmm.GaussianHMM, feature_names: list) -> dict:
         Balance:   of remaining — lowest mean range
         Transition: of remaining — highest mean range
 
-    Returns {state_id: label}
+    Phase One Report Part 2 amendments:
+    1. If features were standardised (scaler_means/stds provided), unscale
+       the cluster means before applying sign checks so that the
+       vwap_dist_atr > 0 / < 0 test reflects actual price-vs-VWAP direction,
+       not z-score artefacts.
+    2. Emit a diagnostic flag when the TrendUp/TrendDown vwap_dist_atr
+       separation is below LABEL_VWAP_MIN_SEPARATION, indicating the HMM
+       fit may be ambiguous (centroid collapse risk).
+
+    Returns (label_map, label_diagnostics).
+    label_diagnostics is a dict with 'ambiguous_fit' and 'vwap_separation' keys.
     """
-    means = model.means_  # shape (N_STATES, N_FEATURES)
+    means = model.means_  # shape (N_STATES, N_FEATURES) — in z-score space if scaled
     feat_idx = {name: i for i, name in enumerate(feature_names)}
 
-    ret_means  = means[:, feat_idx["Returns"]]
-    vwap_means = means[:, feat_idx["vwap_dist_atr"]]
-    range_means= means[:, feat_idx["Range"]]
+    # If features were standardised, un-scale the means to natural units for
+    # the sign checks.  The label assignment logic uses the sign of the
+    # natural-unit vwap_dist_atr mean, not the z-scored mean.
+    if scaler_means is not None and scaler_stds is not None:
+        natural_means = means * scaler_stds + scaler_means
+    else:
+        natural_means = means
+
+    ret_means  = natural_means[:, feat_idx["Returns"]]
+    vwap_means = natural_means[:, feat_idx["vwap_dist_atr"]]
+    range_means= natural_means[:, feat_idx["Range"]]
 
     assigned = {}
     remaining = set(range(N_STATES))
@@ -306,7 +393,28 @@ def assign_labels(model: hmm.GaussianHMM, feature_names: list) -> dict:
     trans = remaining.pop()
     assigned[trans] = "Transition"
 
-    return assigned
+    # Diagnostic: label confidence guard.
+    vwap_separation = abs(vwap_means[tu] - vwap_means[td])
+    ambiguous = vwap_separation < LABEL_VWAP_MIN_SEPARATION
+    if ambiguous:
+        log.warning(
+            f"LABEL CONFIDENCE WARNING: TrendUp/TrendDown vwap_dist_atr "
+            f"separation = {vwap_separation:.4f} (threshold: "
+            f"{LABEL_VWAP_MIN_SEPARATION}). Labels may be unreliable — "
+            f"centroid collapse risk. Consider widening the rolling window "
+            f"or re-running with --full-history."
+        )
+
+    diagnostics = {
+        "ambiguous_fit": ambiguous,
+        "vwap_separation": round(vwap_separation, 6),
+        "tu_vwap_mean": round(float(vwap_means[tu]), 6),
+        "td_vwap_mean": round(float(vwap_means[td]), 6),
+        "tu_ret_mean":  round(float(ret_means[tu]), 6),
+        "td_ret_mean":  round(float(ret_means[td]), 6),
+    }
+
+    return assigned, diagnostics
 
 
 # ===========================================================================
@@ -320,12 +428,25 @@ def build_output(
     X: np.ndarray,
     symbol: str,
     model_version: str,
+    scaler_means: np.ndarray = None,
+    scaler_stds: np.ndarray = None,
+    label_diagnostics: dict = None,
 ) -> pd.DataFrame:
     """
     Assemble the output DataFrame with all required columns.
+
+    Phase One Report Part 2: model.predict() and model.predict_proba() must
+    receive the SAME standardised feature matrix that was used for fitting.
+    If scaler_means/stds are provided, X is scaled before predict.
     """
-    posteriors = model.predict_proba(X)  # (N, 4)
-    states     = model.predict(X)        # (N,)
+    # Standardise for predict if scaler was used during fitting.
+    if scaler_means is not None and scaler_stds is not None:
+        X_pred = (X - scaler_means) / np.where(scaler_stds < 1e-12, 1.0, scaler_stds)
+    else:
+        X_pred = X
+
+    posteriors = model.predict_proba(X_pred)  # (N, 4)
+    states     = model.predict(X_pred)         # (N,)
 
     # Map state indices to label probabilities
     # We need: StateProb_TrendUp, _TrendDown, _Balance, _Transition
@@ -394,7 +515,14 @@ def build_output(
 
     out["ModelVersion"] = model_version
 
-    # Final column order per spec
+    # Phase One Report Part 2 — Label diagnostics per-row so operators can
+    # monitor centroid collapse in real time via the HMM output CSV.
+    diag = label_diagnostics or {}
+    out["LabelAmbiguousFit"] = int(diag.get("ambiguous_fit", False))
+    out["LabelVwapSeparation"] = diag.get("vwap_separation", 0.0)
+
+    # Final column order per spec — new diagnostic columns appended at end
+    # so existing downstream consumers (supervisor, HUD) are not broken.
     final_cols = [
         "session_key", "TimestampET", "Symbol", "StateId", "RegimeLabel",
         "StateProb_TrendUp", "StateProb_TrendDown",
@@ -403,6 +531,7 @@ def build_output(
         "SuggestedAdxMin", "SuggestedCiMax", "SuggestedSlopeGate",
         "SuggestedStopBucket", "ModelVersion", "Tradeable",
         "AllowLong", "AllowShort",
+        "LabelAmbiguousFit", "LabelVwapSeparation",
     ]
     return out[final_cols]
 
@@ -434,23 +563,51 @@ def process_symbol(symbol: str, persist_state: dict) -> dict:
         log.error(f"[{symbol}] Export file not found: {export_path}")
         return persist_state
 
-    # --- Gate: only refit if MIN_NEW_BARS new data has arrived ---
-    current_row_count = sum(1 for _ in open(export_path))
-    last_fit_count    = persist_state.get(f"{symbol}_last_fit_rows", 0)
-    bars_since_fit    = current_row_count - last_fit_count
-
-    if bars_since_fit < MIN_NEW_BARS_TO_REFIT:
-        log.info(f"[{symbol}] Only {bars_since_fit} new bars since last fit "
-                 f"(need {MIN_NEW_BARS_TO_REFIT}). Skipping refit.")
-        return persist_state
-
-    log.info(f"[{symbol}] {bars_since_fit} new bars detected. Fitting HMM...")
-
     # --- Load and prepare ---
+    with open(export_path, "r") as f:
+        current_row_count = sum(1 for _ in f)
     df_raw  = load_export(export_path)
     df_rth  = filter_rth(df_raw)
+    if df_rth.empty:
+        log.warning(f"[{symbol}] No RTH rows available. Skipping.")
+        return persist_state
+
     df_roll = apply_rolling_window(df_rth)
-    df_5m   = resample_to_5m(df_roll)
+    df_5m   = drop_incomplete_5m_bar(resample_to_5m(df_roll), df_roll)
+    if df_5m.empty:
+        log.warning(f"[{symbol}] No completed 5-min bars available. Skipping.")
+        return persist_state
+
+    rth_row_count = len(df_rth)
+    last_fit_rth_rows = int(persist_state.get(f"{symbol}_last_fit_rth_rows", 0) or 0)
+    bars_since_fit = rth_row_count - last_fit_rth_rows if last_fit_rth_rows else rth_row_count
+    latest_5m_ts = pd.to_datetime(df_5m["Timestamp"].max())
+    last_fit_5m_raw = persist_state.get(f"{symbol}_last_fit_5m_ts")
+    last_fit_5m_ts = pd.to_datetime(last_fit_5m_raw) if last_fit_5m_raw else None
+
+    if (not USE_FULL_HISTORY
+            and last_fit_5m_ts is not None
+            and latest_5m_ts <= last_fit_5m_ts):
+        log.info(
+            f"[{symbol}] Latest complete 5-min HMM bar unchanged "
+            f"({latest_5m_ts:%Y-%m-%d %H:%M}). Waiting for next completed bar."
+        )
+        persist_state[f"{symbol}_last_seen_raw_rows"] = current_row_count
+        persist_state[f"{symbol}_last_seen_rth_rows"] = rth_row_count
+        return persist_state
+
+    if USE_FULL_HISTORY:
+        log.info(f"[{symbol}] Full-history rebuild requested. Fitting HMM...")
+    elif last_fit_5m_ts is not None and bars_since_fit < MIN_NEW_BARS_TO_REFIT:
+        log.info(
+            f"[{symbol}] New completed 5-min bar detected with {bars_since_fit} "
+            f"deduped RTH 1-min rows since last fit. Fitting HMM..."
+        )
+    else:
+        log.info(
+            f"[{symbol}] New completed 5-min bar detected "
+            f"({bars_since_fit} deduped RTH 1-min rows since last fit). Fitting HMM..."
+        )
 
     n_days = df_roll["Timestamp"].dt.date.nunique()
     log.info(f"[{symbol}] Rolling window: {n_days} trading days, "
@@ -465,25 +622,41 @@ def process_symbol(symbol: str, persist_state: dict) -> dict:
         return persist_state
 
     # --- Fit ---
-    model, log_likelihood = fit_hmm(X)
+    model, log_likelihood, sc_means, sc_stds = fit_hmm(X)
     log.info(f"[{symbol}] HMM fitted. Log-likelihood: {log_likelihood:.2f}")
 
     # --- Label assignment ---
-    label_map = assign_labels(model, feature_names)
+    label_map, label_diagnostics = assign_labels(
+        model, feature_names,
+        scaler_means=sc_means, scaler_stds=sc_stds
+    )
     log.info(f"[{symbol}] State labels: {label_map}")
+    if label_diagnostics.get("ambiguous_fit"):
+        log.warning(
+            f"[{symbol}] AMBIGUOUS FIT detected — vwap separation "
+            f"{label_diagnostics['vwap_separation']:.4f}. "
+            f"Downstream regimes may drift."
+        )
 
     # --- Build output ---
     model_version = datetime.now().strftime("V3D_%Y%m%d_%H%M")
-    df_out = build_output(df_5m, model, label_map, X, symbol, model_version)
+    df_out = build_output(
+        df_5m, model, label_map, X, symbol, model_version,
+        scaler_means=sc_means, scaler_stds=sc_stds,
+        label_diagnostics=label_diagnostics,
+    )
 
     # --- Write ---
     write_atomic(df_out, output_path)
 
     # --- Update state ---
     persist_state[f"{symbol}_last_fit_rows"]  = current_row_count
+    persist_state[f"{symbol}_last_fit_rth_rows"] = rth_row_count
+    persist_state[f"{symbol}_last_fit_5m_ts"] = latest_5m_ts.isoformat()
     persist_state[f"{symbol}_last_fit_ts"]    = datetime.now().isoformat()
     persist_state[f"{symbol}_last_ll"]        = round(log_likelihood, 4)
     persist_state[f"{symbol}_label_map"]      = {str(k): v for k, v in label_map.items()}
+    persist_state[f"{symbol}_label_diagnostics"] = label_diagnostics
 
     return persist_state
 

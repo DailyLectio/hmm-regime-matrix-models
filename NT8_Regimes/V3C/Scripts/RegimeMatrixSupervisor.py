@@ -15,6 +15,22 @@ import pandas as pd
 # RegimeMatrixSupervisor.py
 # V3C Consensus Supervisor
 #
+# Phase One Recommended Change #1 — Asymmetric Hysteresis with Macro
+# Co-Confirmation (2026-05-03). Adds a state-conditional, symbol-conditional
+# gate layered on top of the existing apply_persistence() mechanism:
+#   - Requires 2 consecutive HMM bars for TrendDown / Balance(NQ) / Transition
+#   - Allows 1-bar TrendUp ONLY when macro confirms (TREND/TREND_STRUCTURE/
+#     BALANCE_STRUCTURE/CONFIRMED_INITIATIVE)
+#   - Quarantines ES TrendUp behind macro confirm (auto-label-collapse hypothesis)
+#   - Hard-closes the gate on any MACRO_STALE_*, MICRO_STALE_*, or MICRO_MISSING
+#   - Adds HMMStateAgeBars / AsymHysteresisGateOpen / AsymHysteresisReason /
+#     AsymHysteresisEnabled audit columns to the V3C output schema; existing
+#     history CSVs are auto-migrated by normalize_history_schema_if_needed
+#     and a `.schema_backup_*` file is saved on first run
+#   - Does NOT rename, remove, or reorder any existing column
+#   - Can be disabled instantly via ASYMMETRIC_HYSTERESIS_ENABLED = False for
+#     rollback to legacy V3C apply_persistence behaviour
+#
 # Intended location:
 #   C:\Users\Valued Customer\NT8_Regimes\V3C\Scripts\RegimeMatrixSupervisor.py
 #
@@ -81,6 +97,57 @@ FINAL_REGIMES = {
 EARLY_INITIATIVE_SCORE_MIN = 58
 BRACKET_INITIATIVE_SCORE_MIN = 55
 
+# ==============================================================================
+# Asymmetric Hysteresis Gate (Phase One Report — Recommended Change #1)
+# ==============================================================================
+# State-conditional, symbol-conditional persistence rule layered on top of the
+# existing apply_persistence() mechanism. The flat 2-bar hysteresis rule from
+# the original Market AI Study overshoots on ES TrendUp (17% fakeout) and
+# ES Balance (19% fakeout) while materially helping on the broken states
+# (TrendDown 60-64%, NQ Balance 66%, NQ Transition 60%).
+#
+# Rule:
+#   - HMM == TrendDown / Balance / Transition -> require 2 consecutive HMM bars
+#   - HMM == TrendUp                          -> 1 bar IF macro confirms
+#   - macro_stale (any MACRO_STALE_* token)   -> hard close, no gate ever
+#   - ES TrendUp                              -> quarantined behind macro confirm
+#                                                (auto-label-collapse hypothesis)
+#
+# When ASYMMETRIC_HYSTERESIS_ENABLED = False the supervisor falls back to the
+# legacy V3C apply_persistence behaviour for safe rollback.
+ASYMMETRIC_HYSTERESIS_ENABLED = True
+
+ASYM_HMM_MIN_PERSISTENCE = {
+    "TrendUp":     1,
+    "TrendDown":   2,
+    "Balance":     2,
+    "Transition":  2,
+}
+
+ASYM_SYMBOL_OVERRIDES = {
+    "ES": {
+        "Balance": 1,        # 19% fakeout, 59 min avg duration
+        "Transition": 2,
+    },
+    "NQ": {
+        # Defaults apply
+    },
+}
+
+# Macro states considered "confirming" for an HMM TrendUp signal.
+ASYM_MACRO_TREND_CONFIRM = {
+    "TREND",
+    "TREND_STRUCTURE",
+    "TREND_UP_MACRO",
+    "TREND_DOWN_MACRO",
+    "BALANCE_STRUCTURE",
+    "CONFIRMED_INITIATIVE",
+}
+
+ASYM_MACRO_STALE_TOKEN = "MACRO_STALE"
+ASYM_MICRO_STALE_TOKEN = "MICRO_STALE"
+ASYM_MICRO_MISSING_TOKEN = "MICRO_MISSING"
+
 
 @dataclass(frozen=True)
 class InstrumentThresholds:
@@ -126,6 +193,11 @@ class RegimeState:
     last_processed_micro_ts: Optional[pd.Timestamp] = None
     price_history: list = field(default_factory=list)
     hmm_history: list = field(default_factory=list)
+    # Phase One Recommended Change #1 — track HMM state age for asymmetric
+    # hysteresis. Independent of FinalRegime persistence used by
+    # apply_persistence(); this counts consecutive HMM-micro-state bars.
+    prev_hmm_regime: str = "Unknown"
+    hmm_state_age: int = 0
 
 
 states: Dict[str, RegimeState] = {"ES": RegimeState(), "NQ": RegimeState()}
@@ -341,6 +413,9 @@ def reset_if_new_trade_date(instrument: str, trade_date: str) -> None:
         state.hmm_history.clear()
         state.last_processed_macro_ts = None
         state.last_trade_date = trade_date
+        # Phase One Recommended Change #1 — reset HMM age tracking each session.
+        state.prev_hmm_regime = "Unknown"
+        state.hmm_state_age = 0
 
 
 def calculate_velocity(instrument: str, macro_ts: pd.Timestamp, current_price: float, current_atr: float) -> float:
@@ -398,18 +473,158 @@ def update_hmm_history(instrument: str, micro_ts: Optional[pd.Timestamp], hmm_la
     return flips
 
 
+# ==============================================================================
+# Phase One Recommended Change #1 — Asymmetric Hysteresis with Macro Confirm
+# ==============================================================================
+def update_hmm_state_age(instrument: str, hmm_label: str) -> int:
+    """
+    Track consecutive HMM-bar persistence in the underlying micro state.
+    Returns the new hmm_state_age value (>= 1 once any HMM label is seen).
+    Independent of update_hmm_history (which is a flip counter); this is a
+    monotonic counter that resets on label change and increments on repeats.
+    """
+    state = states[instrument]
+    label = str(hmm_label).strip() or "Unknown"
+    if label == state.prev_hmm_regime:
+        state.hmm_state_age += 1
+    else:
+        state.prev_hmm_regime = label
+        state.hmm_state_age = 1
+    return state.hmm_state_age
+
+
+def required_hmm_persistence(hmm_regime: str, symbol: str) -> int:
+    """Minimum consecutive HMM bars required for asymmetric hysteresis pass."""
+    overrides = ASYM_SYMBOL_OVERRIDES.get(symbol, {})
+    if hmm_regime in overrides:
+        return int(overrides[hmm_regime])
+    return int(ASYM_HMM_MIN_PERSISTENCE.get(hmm_regime, 2))
+
+
+def compute_asymmetric_hysteresis_gate(
+    hmm_regime: str,
+    macro_regime: str,
+    symbol: str,
+    hmm_state_age: int,
+    macro_stale: bool = False,
+    macro_stale_reason: str = "",
+) -> Tuple[bool, str]:
+    """
+    Phase One Recommended Change #1 — Asymmetric Hysteresis with Macro
+    Co-Confirmation.
+
+    Returns (gate_open, reason_code).
+
+    gate_open = True  -> directional bot permissions may proceed normally
+    gate_open = False -> all directional bot permissions are forced to 0;
+                         reason_code is appended to BotPermissionGateReason
+                         and BlockedReason for audit.
+
+    Rule (from Phase One Report Part 3):
+        IF macro_stale OR macro_regime contains 'MACRO_STALE'/'MICRO_STALE':
+            gate_open = False, reason = HYST_BLOCK_*_STALE
+        ELIF hmm_regime == 'TrendUp':
+            IF macro_regime in ASYM_MACRO_TREND_CONFIRM:
+                gate_open = True (1-bar OK with macro confirm)
+            ELSE:
+                IF symbol == 'NQ' and hmm_state_age >= 2:
+                    gate_open = True (NQ TrendUp 2-bar fallback)
+                ELIF symbol == 'NQ':
+                    gate_open = False (NQ TrendUp 1-bar without macro confirm)
+                ELSE: ES TrendUp without confirm -> quarantine (auto-label
+                                                   collapse hypothesis)
+                    gate_open = False
+        ELSE:
+            needed = required_hmm_persistence(hmm_regime, symbol)
+            IF hmm_state_age >= needed:
+                gate_open = True
+            ELSE:
+                gate_open = False
+    """
+    if not ASYMMETRIC_HYSTERESIS_ENABLED:
+        return True, "HYST_DISABLED"
+
+    # Hard block on macro/micro staleness.
+    if macro_stale:
+        return False, f"HYST_BLOCK_STALE_{macro_stale_reason}".rstrip("_")
+
+    macro_stale_str = (macro_stale_reason or "").upper()
+    if (ASYM_MACRO_STALE_TOKEN in macro_stale_str
+            or ASYM_MICRO_STALE_TOKEN in macro_stale_str
+            or ASYM_MICRO_MISSING_TOKEN in macro_stale_str):
+        return False, f"HYST_BLOCK_STALE_{macro_stale_reason}"
+
+    macro_norm = (macro_regime or "").strip().upper()
+    if ASYM_MACRO_STALE_TOKEN in macro_norm:
+        return False, f"HYST_BLOCK_MACRO_STALE_{macro_norm}"
+
+    # TrendUp branch — preferential 1-bar gate IF macro confirms.
+    if hmm_regime == "TrendUp":
+        if macro_norm in ASYM_MACRO_TREND_CONFIRM:
+            return True, "HYST_PASSED_TRENDUP_MACRO_CONFIRM"
+        if symbol == "NQ":
+            if hmm_state_age >= 2:
+                return True, "HYST_PASSED_NQ_TRENDUP_NO_MACRO_2BAR"
+            return False, f"HYST_BLOCK_NQ_TRENDUP_NO_MACRO_AGE_{hmm_state_age}"
+        # ES TrendUp without macro confirm -> quarantine
+        return False, "HYST_BLOCK_ES_TRENDUP_QUARANTINE"
+
+    # All other HMM states.
+    needed = required_hmm_persistence(hmm_regime, symbol)
+    if hmm_state_age >= needed:
+        return True, f"HYST_PASSED_{hmm_regime.upper()}_AGE_{hmm_state_age}"
+    return False, f"HYST_BLOCK_{hmm_regime.upper()}_AGE_{hmm_state_age}_OF_{needed}"
+
+
 def detect_stale_data(now_ts: pd.Timestamp, macro_ts: pd.Timestamp, micro_ts: Optional[pd.Timestamp]) -> Tuple[bool, str]:
     if not STALE_GUARD_ENABLED:
         return False, "STALE_GUARD_DISABLED"
 
-    macro_age = (now_ts - macro_ts).total_seconds() / 60.0
-    if macro_age > MAX_MACRO_AGE_MINUTES:
-        return True, f"MACRO_STALE_{macro_age:.1f}MIN"
+    # Phase One Report Part 4 — Session-boundary guard.
+    # 119,665-minute stale ages occur when the macro CSV contains rows from a
+    # prior session (days or weeks ago) because the macro builder was not
+    # running / the CSV was not flushed.  Compare trade dates first; if the
+    # macro row is from a different calendar date than now, it is categorically
+    # stale regardless of the minute delta.  Allow one day of slack for
+    # overnight sessions (e.g., macro at 16:00 on date D, now is 09:35 on D+1).
+    macro_date = macro_ts.date()
+    now_date = now_ts.date()
+    date_diff_days = (now_date - macro_date).days
+    if date_diff_days > 1:
+        return True, f"MACRO_STALE_WRONG_SESSION_{date_diff_days}D"
+    if date_diff_days == 1:
+        # Tolerate overnight: macro at 16:00 yesterday + now at 09:35 today
+        # = ~17.5 hours. Anything older than 20 hours is a missed session.
+        overnight_age = (now_ts - macro_ts).total_seconds() / 3600.0
+        if overnight_age > 20.0:
+            return True, f"MACRO_STALE_OVERNIGHT_{overnight_age:.1f}HR"
+        # Overnight gap is within tolerance — macro is from yesterday's close,
+        # now is today's open.  This is expected at session start.  Do NOT
+        # fall through to the minute-based check (which would see 1000+ min
+        # and falsely flag stale).  Apply only the micro freshness check below.
+    else:
+        # Same calendar day — standard minute-based freshness check.
+        macro_age = (now_ts - macro_ts).total_seconds() / 60.0
+        # Safety cap: if somehow still >400 minutes (impossible within RTH),
+        # flag as session boundary.  This prevents nonsensical ages like
+        # 119665 minutes from ever appearing in the stale reason string.
+        if macro_age > 400.0:
+            return True, f"MACRO_STALE_EXCEEDED_SESSION_{macro_age:.0f}MIN"
+        if macro_age > MAX_MACRO_AGE_MINUTES:
+            return True, f"MACRO_STALE_{macro_age:.1f}MIN"
 
     if micro_ts is None:
         return True, "MICRO_MISSING"
 
+    # Micro staleness — also guard against cross-session.
+    micro_date = micro_ts.date()
+    micro_date_diff = (macro_date - micro_date).days
+    if micro_date_diff > 1:
+        return True, f"MICRO_STALE_WRONG_SESSION_{micro_date_diff}D"
+
     micro_lag = (macro_ts - micro_ts).total_seconds() / 60.0
+    if micro_lag > 400.0:
+        return True, f"MICRO_STALE_EXCEEDED_SESSION_{micro_lag:.0f}MIN"
     if micro_lag > MAX_MICRO_AGE_MINUTES:
         return True, f"MICRO_STALE_{micro_lag:.1f}MIN_BEHIND_MACRO"
 
@@ -801,9 +1016,21 @@ def map_bot_permissions(
     phase: str,
     confidence: int,
     conflict: int = 0,
-) -> dict:
+    hmm_regime: str = "Unknown",
+    hmm_state_age: int = 0,
+    macro_stale: bool = False,
+    macro_stale_reason: str = "",
+) -> Tuple[dict, str]:
     """
     Produces both legacy lane names and cleaner future bot names.
+
+    Returns (flags, asym_reason). asym_reason is a Phase One Recommended
+    Change #1 audit token (HYST_PASSED_*, HYST_BLOCK_*, or HYST_DISABLED).
+    Caller writes asym_reason into the BotPermissionGateReason audit field.
+
+    The gate is evaluated AFTER the legacy permission table so that the
+    asymmetric hysteresis rule's hard-close branches (macro stale, ES TrendUp
+    quarantine, under-age HMM) zero out all bot permissions consistently.
     """
     flags = {
         "AllowMomo": False,
@@ -878,7 +1105,23 @@ def map_bot_permissions(
     else:
         flags["AllowMomo"] = False
 
-    return flags
+    # Phase One Recommended Change #1 — Asymmetric Hysteresis hard close.
+    # Applied after all permission lanes are computed so that block decisions
+    # consistently zero everything out, including legacy lanes like Pine and
+    # ESScalper. Audit reason is returned to caller for BotPermissionGateReason.
+    asym_open, asym_reason = compute_asymmetric_hysteresis_gate(
+        hmm_regime=hmm_regime,
+        macro_regime=raw_macro,
+        symbol=instrument,
+        hmm_state_age=hmm_state_age,
+        macro_stale=macro_stale,
+        macro_stale_reason=macro_stale_reason,
+    )
+    if not asym_open:
+        for key in flags:
+            flags[key] = False
+
+    return flags, asym_reason
 
 
 def build_v3c_row(
@@ -897,6 +1140,8 @@ def build_v3c_row(
     stale_flag: bool,
     stale_reason: str,
     permissions: dict,
+    hmm_state_age: int = 0,
+    asym_hyst_reason: str = "HYST_DISABLED",
 ) -> dict:
     raw_macro = str(macro_row.get("official_regime_label", "UNRESOLVED"))
     raw_playbook = str(macro_row.get("playbook_state", "TRANSITION"))
@@ -958,6 +1203,17 @@ def build_v3c_row(
         # Safety
         "StaleDataFlag": _bool_text(stale_flag),
         "StaleReason": stale_reason,
+
+        # Phase One Recommended Change #1 — Asymmetric Hysteresis audit fields.
+        # HMMStateAgeBars is the supervisor-tracked persistence counter for the
+        # underlying HMM micro state. It is distinct from HMMStateAge (which
+        # comes from the micro_row's own StateAge column emitted by the HMM
+        # watchdog) and from PendingCount (which counts FinalRegime confirmations
+        # in apply_persistence). All three are written so analysts can compare.
+        "HMMStateAgeBars": int(hmm_state_age),
+        "AsymHysteresisReason": str(asym_hyst_reason),
+        "AsymHysteresisGateOpen": _bool_text(not str(asym_hyst_reason).startswith("HYST_BLOCK_")),
+        "AsymHysteresisEnabled": _bool_text(ASYMMETRIC_HYSTERESIS_ENABLED),
     }
 
     for key, value in permissions.items():
@@ -1005,6 +1261,10 @@ def process_instrument(instrument: str, paths: dict, now_ts: pd.Timestamp) -> Op
 
     velocity_3cp = calculate_velocity(instrument, macro_ts, current_price, current_atr)
     hmm_flip_count = update_hmm_history(instrument, micro_ts, hmm_label)
+    # Phase One Recommended Change #1 — track HMM micro-state age in parallel
+    # with the existing 5-bar flip counter. Used by the asymmetric hysteresis
+    # gate below.
+    hmm_state_age = update_hmm_state_age(instrument, hmm_label)
     stale_flag, stale_reason = detect_stale_data(now_ts, macro_ts, micro_ts)
 
     macro_for_classify = macro_row.copy()
@@ -1030,7 +1290,7 @@ def process_instrument(instrument: str, paths: dict, now_ts: pd.Timestamp) -> Op
         confidence=int(candidate_info["confidence"]),
     )
 
-    permissions = map_bot_permissions(
+    permissions, asym_hyst_reason = map_bot_permissions(
         instrument=instrument,
         final_regime=final_regime,
         direction=final_direction,
@@ -1038,6 +1298,10 @@ def process_instrument(instrument: str, paths: dict, now_ts: pd.Timestamp) -> Op
         phase=str(macro_row.get("phase", "")),
         confidence=int(candidate_info["confidence"]),
         conflict=int(candidate_info.get("conflict", 0)),
+        hmm_regime=hmm_label,
+        hmm_state_age=hmm_state_age,
+        macro_stale=stale_flag,
+        macro_stale_reason=stale_reason,
     )
 
     row = build_v3c_row(
@@ -1056,6 +1320,8 @@ def process_instrument(instrument: str, paths: dict, now_ts: pd.Timestamp) -> Op
         stale_flag=stale_flag,
         stale_reason=stale_reason,
         permissions=permissions,
+        hmm_state_age=hmm_state_age,
+        asym_hyst_reason=asym_hyst_reason,
     )
 
     append_csv_row(row, paths["history_output"])

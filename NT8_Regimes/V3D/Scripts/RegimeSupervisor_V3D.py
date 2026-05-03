@@ -3,6 +3,19 @@ RegimeSupervisor_V3D.py — Stage C of the V3D Institutional Regime Matrix
 Merges Stage A (Macro) and Stage B (HMM) classifications into final regime states
 with bot permissions, confidence scoring, and position sizing.
 
+Phase One Recommended Change #1 — Asymmetric Hysteresis with Macro
+Co-Confirmation (2026-05-03). State-conditional, symbol-conditional gate that:
+  - Requires 2 consecutive HMM bars for TrendDown / Balance(NQ) / Transition
+  - Allows 1-bar TrendUp ONLY when macro confirms (TREND/TREND_STRUCTURE/
+    BALANCE_STRUCTURE/CONFIRMED_INITIATIVE)
+  - Quarantines ES TrendUp behind macro confirm (auto-label-collapse hypothesis)
+  - Hard-closes the gate on any MACRO_STALE_* condition
+  - Adds HMMStateAgeBars / AsymHysteresisGateOpen / AsymHysteresisReason /
+    AsymHysteresisEnabled audit columns to the RegimeMatrix output schema
+  - Does NOT rename, remove, or reorder any existing column
+  - Can be disabled instantly via ASYMMETRIC_HYSTERESIS_ENABLED = False for
+    rollback to legacy V3D persistence behaviour
+
 Run modes:
     --batch     Process full history, write RegimeMatrix_Full.csv
     --live      Continuous loop, atomic write to RegimeMatrix_Latest.csv
@@ -125,6 +138,64 @@ MIN_BOT_PERMISSION_AGE_BARS = 2  # New compression/emerging labels hold Momo/Sni
 MIN_TRANSITION_EXIT_BOT_AGE_BARS = 3  # Transition exits need extra proof before Momo/Sniper resume
 REGIME_FLIP_LOOKBACK_BARS = 10
 MAX_REGIME_FLIPS_10BAR = 4
+
+# ---------------------------------------------------------------------------
+# Asymmetric Hysteresis Gate (Phase One Report — Recommended Change #1)
+# ---------------------------------------------------------------------------
+# State-conditional, symbol-conditional persistence rule. The flat 2-bar
+# hysteresis recommendation from the Market AI Study overshoots on ES TrendUp
+# (17% fakeout, 67.6 min avg) and ES Balance (19% fakeout, 59 min avg) while
+# materially helping on the broken states (TrendDown 60-64% fakeout, NQ
+# Balance 66%, NQ Transition 60%).
+#
+# Rule:
+#   - HMM == TrendDown / Balance / Transition  -> require 2 consecutive bars
+#   - HMM == TrendUp                            -> 1 bar IF macro confirms
+#   - MACRO_STALE_*                             -> hard close, no gate ever
+#   - ES TrendUp is also quarantined behind macro confirm because the
+#     longitudinal data shows a likely auto-label collapse on this state
+#     (only 17 ES TrendUp occurrences vs 315 TrendDown).
+#
+# When ASYMMETRIC_HYSTERESIS_ENABLED = False, the supervisor falls back to
+# its prior persistence behaviour (V3D legacy) for safe rollback.
+ASYMMETRIC_HYSTERESIS_ENABLED = True
+
+# Per-HMM-state minimum HMM-bar persistence required to open directional bots.
+# These are HMM-state-of-the-row checks, distinct from the FinalRegime
+# state_age check that already exists for TREND_EXPANSION.
+ASYM_HMM_MIN_PERSISTENCE = {
+    "TrendUp":     1,   # Clean state — 1-bar with macro confirm
+    "TrendDown":   2,   # 60-64% fakeout — require 2-bar
+    "Balance":     2,   # NQ 66% fakeout, ES 19% — split by symbol below
+    "Transition":  2,   # 60% fakeout on NQ
+}
+
+# Symbol-specific overrides on the persistence rule.
+# ES Balance is a fortress (59 min avg, 19% fakeout) -> 1 bar acceptable.
+# NQ Balance is fragile (18 min avg, 66% fakeout)    -> 2 bars enforced.
+ASYM_SYMBOL_OVERRIDES = {
+    "ES": {
+        "Balance": 1,        # 19% fakeout, 59 min avg duration -> 1-bar safe
+        "Transition": 2,     # 28% fakeout, 49 min avg duration -> 2-bar
+    },
+    "NQ": {
+        # Defaults apply: TrendDown=2, Balance=2, Transition=2, TrendUp=1
+    },
+}
+
+# When HMM is in TrendUp, the asymmetric rule still requires Macro confirmation
+# instead of bar persistence to open the gate. These macro states are
+# considered "confirming" for an upside HMM signal.
+ASYM_MACRO_TREND_CONFIRM = {
+    "TREND",                  # Macro is in trend mode
+    "TREND_STRUCTURE",        # Long-cycle trend structure
+    "BALANCE_STRUCTURE",      # Trend digestion in balance (flag/digestion)
+    "CONFIRMED_INITIATIVE",   # Initiative drive
+}
+
+# Macro stale token prefix — any value containing this in BlockedReason
+# or stale_reason should hard-close the gate.
+ASYM_MACRO_STALE_TOKEN = "MACRO_STALE"
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -594,6 +665,94 @@ def compute_bot_permission_gate_reason(
     return "|".join(reasons) if reasons else "NONE"
 
 
+# ---------------------------------------------------------------------------
+# Asymmetric Hysteresis Gate (Phase One Report — Recommended Change #1)
+# ---------------------------------------------------------------------------
+def required_hmm_persistence(hmm_regime: str, symbol: str) -> int:
+    """
+    Return the minimum number of consecutive HMM bars required for a state
+    to be considered confirmed for asymmetric hysteresis purposes.
+    """
+    overrides = ASYM_SYMBOL_OVERRIDES.get(symbol, {})
+    if hmm_regime in overrides:
+        return int(overrides[hmm_regime])
+    return int(ASYM_HMM_MIN_PERSISTENCE.get(hmm_regime, 2))
+
+
+def compute_asymmetric_hysteresis_gate(
+    hmm_regime: str,
+    macro_regime: str,
+    symbol: str,
+    hmm_state_age: int,
+    macro_stale: bool = False,
+    macro_stale_reason: str = "",
+) -> Tuple[bool, str]:
+    """
+    Phase One Recommended Change #1 — Asymmetric Hysteresis with Macro
+    Co-Confirmation.
+
+    Returns (gate_open, reason_code).
+
+    gate_open = True  -> directional bot permissions may proceed normally
+    gate_open = False -> all directional bot permissions are forced to 0;
+                         reason_code is appended to BlockedReason and
+                         BotPermissionGateReason for audit.
+
+    Rule (from Phase One Report Part 3):
+        IF macro_stale OR macro_regime contains 'MACRO_STALE':
+            gate_open = False, reason = HYST_BLOCK_MACRO_STALE
+        ELIF hmm_regime == 'TrendUp':
+            IF macro_regime in ASYM_MACRO_TREND_CONFIRM:
+                gate_open = True (1-bar OK with macro confirm)
+            ELIF hmm_state_age >= 1:
+                # NQ TrendUp is borderline (34% fakeout). Without macro
+                # confirm we still allow the gate but flag it for audit.
+                IF symbol == 'NQ':
+                    gate_open = True, reason = HYST_NQ_TRENDUP_NO_MACRO
+                ELSE:
+                    # ES TrendUp is quarantined per Phase One Report Part 2.
+                    gate_open = False, reason = HYST_ES_TRENDUP_QUARANTINE
+        ELSE:
+            needed = required_hmm_persistence(hmm_regime, symbol)
+            IF hmm_state_age >= needed:
+                gate_open = True, reason = HYST_PASSED_<needed>
+            ELSE:
+                gate_open = False, reason = HYST_BLOCK_<state>_AGE_<age>_OF_<needed>
+    """
+    if not ASYMMETRIC_HYSTERESIS_ENABLED:
+        return True, "HYST_DISABLED"
+
+    # Hard block on macro staleness — no signal can override missing macro data.
+    if macro_stale or (macro_stale_reason and ASYM_MACRO_STALE_TOKEN in str(macro_stale_reason).upper()):
+        return False, f"HYST_BLOCK_MACRO_STALE_{macro_stale_reason}".rstrip("_")
+
+    macro_norm = (macro_regime or "").strip().upper()
+    if ASYM_MACRO_STALE_TOKEN in macro_norm:
+        return False, f"HYST_BLOCK_MACRO_STALE_{macro_norm}"
+
+    # TrendUp branch — preferential 1-bar gate IF macro confirms.
+    if hmm_regime == "TrendUp":
+        if macro_norm in ASYM_MACRO_TREND_CONFIRM:
+            return True, "HYST_PASSED_TRENDUP_MACRO_CONFIRM"
+        if hmm_state_age >= 1:
+            if symbol == "NQ":
+                # NQ TrendUp without macro confirm — borderline (34% fakeout).
+                # Allow but flag for audit; require 2-bar instead of 1.
+                if hmm_state_age >= 2:
+                    return True, "HYST_PASSED_NQ_TRENDUP_NO_MACRO_2BAR"
+                return False, "HYST_BLOCK_NQ_TRENDUP_NO_MACRO_AGE_1"
+            # ES TrendUp without macro confirm — quarantined per the Phase One
+            # auto-label-collapse hypothesis (only 17 ES TrendUp occurrences).
+            return False, "HYST_BLOCK_ES_TRENDUP_QUARANTINE"
+        return False, "HYST_BLOCK_TRENDUP_AGE_0"
+
+    # All other HMM states — require N-bar persistence.
+    needed = required_hmm_persistence(hmm_regime, symbol)
+    if hmm_state_age >= needed:
+        return True, f"HYST_PASSED_{hmm_regime.upper()}_AGE_{hmm_state_age}"
+    return False, f"HYST_BLOCK_{hmm_regime.upper()}_AGE_{hmm_state_age}_OF_{needed}"
+
+
 def compute_bot_permissions(
     final_regime: str,
     final_direction: str,
@@ -602,19 +761,30 @@ def compute_bot_permissions(
     state_age: int = 0,
     prev_regime: str = None,
     flip_count_10bar: int = 0,
-    sim_test: bool = False
-) -> Dict[str, int]:
+    sim_test: bool = False,
+    symbol: str = "NQ",
+    hmm_state_age: int = 0,
+    macro_regime: str = "",
+    macro_stale: bool = False,
+    macro_stale_reason: str = "",
+) -> Tuple[Dict[str, int], str]:
     """
     Map FinalRegime to bot permission flags.
-    Returns dict with Allow{Bot} and {Bot}SizePct keys.
+    Returns (perms_dict, asym_reason).
+
+    perms_dict has Allow{Bot} flags as before.
+    asym_reason is a string token for the asymmetric hysteresis gate decision
+    (HYST_PASSED_*, HYST_BLOCK_*, or HYST_DISABLED), used by the calling row
+    builder to populate BotPermissionGateReason and BlockedReason audit fields.
 
     V3D Fader uses the Pine permission/size lane. In TREND_EXPANSION that lane
     only opens when HMM confirms the expansion direction; the directional fade
     flags decide which counter-trend side can actually trade.
 
     state_age is the number of consecutive bars this final regime label has
-    persisted. Brand-new trend labels hold Momo/Sniper back to reduce whipsaw
-    entries during regime transitions.
+    persisted. hmm_state_age is the analogous count for the underlying HMM
+    micro-state, used by the asymmetric hysteresis gate (Phase One Report
+    Recommended Change #1).
     """
     hmm_confirms_expansion = (
         final_regime == "TREND_EXPANSION"
@@ -624,7 +794,19 @@ def compute_bot_permissions(
     gate_reason = compute_bot_permission_gate_reason(
         final_regime, state_age, prev_regime, flip_count_10bar
     )
-    
+
+    # Phase One Report Recommended Change #1 — Asymmetric Hysteresis.
+    # The gate is evaluated even when the FinalRegime is non-directional so
+    # that Rotation lanes also get the macro-stale hard close.
+    asym_open, asym_reason = compute_asymmetric_hysteresis_gate(
+        hmm_regime=hmm_regime,
+        macro_regime=macro_regime,
+        symbol=symbol,
+        hmm_state_age=hmm_state_age,
+        macro_stale=macro_stale,
+        macro_stale_reason=macro_stale_reason,
+    )
+
     # Base permission table (Section 6)
     BOT_PERMISSIONS = {
         "TREND_EXPANSION": {
@@ -654,14 +836,14 @@ def compute_bot_permissions(
             "AllowADX_DI": 0, "AllowSniper": 0,
         },
     }
-    
+
     perms = BOT_PERMISSIONS.get(final_regime, BOT_PERMISSIONS["TRANSITION"]).copy()
-    
+
     # SIM testing opens the directional scout lane in moderate trend states.
     if sim_test and final_regime in ["TREND_COMPRESSION", "TREND_EMERGING"]:
         perms["AllowADX_DI"] = 1
         perms["AllowSniper"] = 1
-    
+
     # Special case: Pine only in TREND_COMPRESSION if conflict < 0.35
     if final_regime == "TREND_COMPRESSION" and conflict_score >= 0.35:
         perms["AllowPine"] = 0
@@ -669,12 +851,19 @@ def compute_bot_permissions(
     if "REGIME_PERMISSION_COOLDOWN" in gate_reason or "TRANSITION_EXIT_COOLDOWN" in gate_reason:
         perms["AllowMomo"] = 0
         perms["AllowSniper"] = 0
-    
+
     if "CHOPPY_REGIME_FLIPS" in gate_reason:
         for key in perms:
             perms[key] = 0
-    
-    return perms
+
+    # Asymmetric hysteresis hard close — applied last so it overrides any
+    # earlier permission grants. Macro-stale, ES TrendUp quarantine, and
+    # under-age HMM states all close the gate.
+    if not asym_open:
+        for key in perms:
+            perms[key] = 0
+
+    return perms, asym_reason
 
 
 def compute_size_pct(regime_confidence: int, conflict_score: float) -> int:
@@ -866,7 +1055,14 @@ def process_symbol(
     prev_regime_before_current = None
     state_age = 0
     regime_flip_history = []
-    
+
+    # Phase One Recommended Change #1 — HMM micro-state age tracking for the
+    # asymmetric hysteresis gate. This is independent of FinalRegime state_age
+    # because the hysteresis rule keys on the underlying HMM state, not the
+    # downstream FinalRegime label.
+    prev_hmm_regime = None
+    hmm_state_age = 0
+
     # Output rows
     output_rows = []
     
@@ -882,6 +1078,8 @@ def process_symbol(
             prev_regime_before_current = None
             state_age = 0
             regime_flip_history = []
+            prev_hmm_regime = None
+            hmm_state_age = 0
         
         # Compute scores
         phase = row.get("phase", "UNKNOWN")
@@ -890,7 +1088,24 @@ def process_symbol(
         raw_trend_score = compute_trend_expansion_score(row, symbol)
         kalman_score = kalman_filter.update(raw_trend_score)
         conflict_score = compute_conflict_score(row, symbol)
-        
+
+        # Update HMM state age (for asymmetric hysteresis gate)
+        current_hmm = row.get("RegimeLabel", "")
+        if current_hmm == prev_hmm_regime:
+            hmm_state_age += 1
+        else:
+            hmm_state_age = 1
+            prev_hmm_regime = current_hmm
+
+        # Detect macro staleness for the gate's hard-close branch.
+        # In batch mode merge_stages() already drops rows with macro/HMM lag
+        # outside the 10-min tolerance, so macro_stale here is False.
+        # Live mode will flip this to True via Stage A's MACRO_STALE_* tokens
+        # if/when they appear in the macro row.
+        macro_stale_reason = str(row.get("stale_reason", ""))
+        macro_stale_flag = bool(int(row.get("stale_data_flag", 0) or 0)) or \
+                           ASYM_MACRO_STALE_TOKEN in macro_stale_reason.upper()
+
         # Classify final regime
         if override is not None:
             final_regime = override["FinalRegime"]
@@ -922,10 +1137,15 @@ def process_symbol(
             prev_regime = final_regime
         
         # Compute bot permissions
-        bot_perms = compute_bot_permissions(
+        bot_perms, asym_hyst_reason = compute_bot_permissions(
             final_regime, final_direction, row.get("RegimeLabel", ""),
             conflict_score, state_age,
-            prev_regime_before_current, flip_count_10bar, sim_test
+            prev_regime_before_current, flip_count_10bar, sim_test,
+            symbol=symbol,
+            hmm_state_age=hmm_state_age,
+            macro_regime=row.get("official_regime_label", ""),
+            macro_stale=macro_stale_flag,
+            macro_stale_reason=macro_stale_reason,
         )
         if override_source == "EXTREME_THRUST":
             bot_perms["AllowExpansion"] = 0
@@ -933,6 +1153,9 @@ def process_symbol(
             bot_perms["AllowPine"] = 0
             bot_perms["AllowADX_DI"] = 0
             bot_perms["AllowSniper"] = 1
+            # EXTREME_THRUST overrides the asymmetric hysteresis hard-close
+            # because the override is a macro-only conviction signal.
+            asym_hyst_reason = "HYST_OVERRIDE_EXTREME_THRUST"
         bot_gate_reason = compute_bot_permission_gate_reason(
             final_regime, state_age, prev_regime_before_current, flip_count_10bar
         )
@@ -942,6 +1165,14 @@ def process_symbol(
         if "CHOPPY_REGIME_FLIPS" in bot_gate_reason:
             for key in bot_perms:
                 bot_perms[key] = 0
+
+        # Compose the full bot gate reason string with asymmetric hysteresis
+        # appended for audit visibility.
+        if bot_gate_reason == "NONE":
+            bot_gate_reason = asym_hyst_reason
+        elif asym_hyst_reason and asym_hyst_reason != "HYST_DISABLED":
+            bot_gate_reason = f"{bot_gate_reason}|{asym_hyst_reason}"
+
         dir_perms = compute_directional_permissions(
             final_regime, final_direction,
             row.get("official_bias_label", ""),
@@ -1036,6 +1267,12 @@ def process_symbol(
             "StateAgeBars": state_age,
             "RegimeFlipCount10Bar": flip_count_10bar,
             "StaleDataFlag": 0,  # Always fresh in batch mode
+
+            # Phase One Recommended Change #1 — Asymmetric Hysteresis audit fields
+            "HMMStateAgeBars": hmm_state_age,
+            "AsymHysteresisGateOpen": int(not asym_hyst_reason.startswith("HYST_BLOCK_")),
+            "AsymHysteresisReason": asym_hyst_reason,
+            "AsymHysteresisEnabled": int(ASYMMETRIC_HYSTERESIS_ENABLED),
         }
         
         output_rows.append(output_row)
