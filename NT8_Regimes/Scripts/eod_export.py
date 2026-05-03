@@ -1,5 +1,5 @@
 """
-Build the unified daily trade export for V1A, V3C, V3D, and standalone accounts.
+Build the unified daily trade export for V1A, V1B, V3C, V3D, OG, and standalone accounts.
 
 This script normally treats the account registry as authoritative for model
 taxonomy, while preserving raw OG rows so legacy strategies stay labeled OG.
@@ -266,7 +266,11 @@ def apply_registry(df: pd.DataFrame, registry: dict[str, dict[str, Any]]) -> pd.
     def lookup(account: Any, key: str, default: str) -> str:
         return str(registry.get(str(account), {}).get(key, default))
 
-    df["model_version"] = df["account"].map(lambda x: lookup(x, "model", "UNKNOWN"))
+    registry_model = df["account"].map(lambda x: lookup(x, "model", "UNKNOWN"))
+    known_raw_model = raw_model.isin(["V1A", "V1B", "V3C", "V3D", "OG"])
+    weak_registry_model = registry_model.astype(str).str.upper().isin(["UNKNOWN", "STANDALONE", ""])
+    df["model_version"] = registry_model
+    df.loc[known_raw_model & weak_registry_model, "model_version"] = raw_model[known_raw_model & weak_registry_model]
     df["strategy_name"] = df["account"].map(lambda x: lookup(x, "strategy", "UNKNOWN"))
     df["ab_mode"] = df["account"].map(lambda x: lookup(x, "ab_mode", "N/A"))
     if "bot_name" not in df.columns:

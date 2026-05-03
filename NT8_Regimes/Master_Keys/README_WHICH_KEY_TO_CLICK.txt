@@ -11,6 +11,14 @@ END OF DAY
 
 DAILY REVIEW FILE
 C:\Users\Valued Customer\NT8_Regimes\UNIFIED\AllModels_TradeLog_YYYYMMDD.csv
+C:\Users\Valued Customer\NT8_Regimes\UNIFIED\Reports\Daily_Trade_Performance_YYYYMMDD.md
+
+END OF WEEK
+1. ALL_MODELS_EOW_EXPORT.bat
+
+WEEKLY REVIEW FILE
+C:\Users\Valued Customer\NT8_Regimes\UNIFIED\AllModels_TradeLog_ALL.csv
+C:\Users\Valued Customer\NT8_Regimes\UNIFIED\Reports\EOW_Trade_Performance_YYYYMMDD.md
 
 NOTES
 - Older start/pre-market/EOD launchers were moved to:

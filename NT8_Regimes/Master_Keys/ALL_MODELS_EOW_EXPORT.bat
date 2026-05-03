@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-title All Models EOD Export
+title All Models EOW Export
 cd /d "C:\Users\Valued Customer\NT8_Regimes"
 
 set "LOCAL_PYTHON=C:\Users\Valued Customer\AppData\Local\Programs\Python\Python312\python.exe"
@@ -20,32 +20,32 @@ if %ERRORLEVEL%==0 (
 
 echo.
 echo ============================================================
-echo   ALL MODELS EOD EXPORT
+echo   ALL MODELS END-OF-WEEK EXPORT
 echo ============================================================
 echo.
 
-echo [1/2] Building unified daily trade export...
-"%PYTHON_EXE%" %PYTHON_ARGS% "Scripts\eod_export.py" --date today
+echo [1/2] Building all-history unified trade export...
+"%PYTHON_EXE%" %PYTHON_ARGS% "Scripts\eod_export.py" --date all
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [ERROR] Unified EOD export failed.
+    echo [ERROR] Unified all-history export failed.
     pause
     exit /b 1
 )
 
 echo.
-echo [2/2] Building daily markdown performance report...
-"%PYTHON_EXE%" %PYTHON_ARGS% "Scripts\trade_performance_report.py" --mode daily --date today
+echo [2/2] Building weekly markdown performance report...
+"%PYTHON_EXE%" %PYTHON_ARGS% "Scripts\trade_performance_report.py" --mode weekly --week-ending auto
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [ERROR] Daily markdown report failed.
+    echo [ERROR] Weekly markdown report failed.
     pause
     exit /b 1
 )
 
 echo.
 echo Outputs:
-echo   C:\Users\Valued Customer\NT8_Regimes\UNIFIED
+echo   C:\Users\Valued Customer\NT8_Regimes\UNIFIED\AllModels_TradeLog_ALL.csv
 echo   C:\Users\Valued Customer\NT8_Regimes\UNIFIED\Reports
 echo.
 pause
