@@ -1,0 +1,95 @@
+V3C MASTER LAUNCHER GUIDE
+=========================
+
+Purpose
+-------
+These commands give V3C its own one-command daily workflow without touching V3D.
+V3C uses the 100-day live window in V3C\LiveWindow and writes only V3C outputs.
+
+
+Morning Command
+---------------
+C:\Users\Valued Customer\NT8_Regimes\V3C\Keys\V3C_START.bat
+
+Full master file:
+C:\Users\Valued Customer\NT8_Regimes\V3C\Keys\V3C_PreMarket_Master.bat
+
+What it does:
+- Checks required V3C folders and scripts.
+- Generates the previous business day regime report.
+- Stops duplicate V3C-only Python/batch processes.
+- Starts V3C ModelFeed Watchdog.
+- Starts V3C Regime Matrix Supervisor.
+- Waits 60 seconds.
+- Verifies ES/NQ V3C Latest files.
+- Prints the required HUD settings and a short arming reminder.
+
+
+Evening Command
+---------------
+C:\Users\Valued Customer\NT8_Regimes\V3C\Keys\V3C_EOD.bat
+
+Full master file:
+C:\Users\Valued Customer\NT8_Regimes\V3C\Keys\V3C_EndOfDay_Shutdown.bat
+
+What it does:
+- Stops V3C-only Python/batch pipeline processes.
+- Generates today's regime report.
+- Archives V3C Latest and History CSVs.
+- Prints latest file timestamps.
+
+
+Reports And Archives
+--------------------
+Reports:
+C:\Users\Valued Customer\NT8_Regimes\V3C\Reports
+
+Archives:
+C:\Users\Valued Customer\NT8_Regimes\V3C\History
+
+Report files include:
+- FinalRegime counts
+- MacroRegime counts
+- Reason counts
+- Stale row count
+- Regime/reason change counts
+- Change timeline
+
+
+Optional Scheduling
+-------------------
+To create Windows scheduled tasks:
+
+C:\Users\Valued Customer\NT8_Regimes\V3C\Keys\Install_V3C_Scheduled_Tasks.bat
+
+It creates:
+- V3C PreMarket Master at 09:15 Monday-Friday
+- V3C EndOfDay Shutdown at 16:05 Monday-Friday
+
+To remove the tasks:
+
+C:\Users\Valued Customer\NT8_Regimes\V3C\Keys\Remove_V3C_Scheduled_Tasks.bat
+
+Windows Task Scheduler uses the computer's local time. This machine should be
+set to Eastern time for 09:15 and 16:05 ET behavior.
+
+
+Normal Daily Workflow
+---------------------
+1. Before the open, run V3C\Keys\V3C_START.bat.
+2. Confirm two visible windows are running:
+   - V3C ModelFeed Watchdog
+   - V3C Regime Matrix Supervisor
+3. In NinjaTrader, keep HUD Data Folder Path set to:
+   C:\Users\Valued Customer\NT8_Regimes\V3C
+4. Confirm the V3C HUD is loaded on each ES/NQ instrument family.
+5. Use Leader Symbol Mapping = True.
+6. Debug Prints = False after confirming fresh.
+7. 09:25-09:35 ET: observe only.
+8. First arming pass: one simple Momo V3C template per instrument.
+9. After the close, run V3C\Keys\V3C_EOD.bat.
+
+
+Important
+---------
+This is strictly for V3C. It does not start, stop, or archive V3D files.

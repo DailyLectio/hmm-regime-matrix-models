@@ -1,0 +1,14 @@
+contract,source_file,contract_sequence,original_rows,rows_after_date_filter,bad_timestamps_removed,bad_ohlc_removed,duplicate_timestamps_within_file_removed,first_timestamp,last_timestamp
+ES 06-23,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 06-23.Last.txt,0,15648,15648,0,0,0,2023-06-01 04:01:00,2023-06-16 13:31:00
+ES 09-23,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 09-23.Last.txt,1,97296,97296,0,0,0,2023-06-08 04:01:00,2023-09-15 13:30:00
+ES 12-23,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 12-23.Last.txt,2,96439,96439,0,0,0,2023-09-07 04:02:00,2023-12-15 14:30:00
+ES 03-24,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 03-24.Last.txt,3,93602,93602,0,0,0,2023-12-07 05:01:00,2024-03-15 13:30:00
+ES 06-24,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 06-24.Last.txt,4,101689,101689,0,0,0,2024-03-07 05:01:00,2024-06-21 13:30:00
+ES 09-24,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 09-24.Last.txt,5,95968,95968,0,0,0,2024-06-13 04:01:00,2024-09-22 20:28:00
+ES 12-24,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 12-24.Last.txt,6,96567,96567,0,0,0,2024-09-12 04:01:00,2024-12-22 18:43:00
+ES 03-25,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 03-25.Last.txt,7,88471,88471,0,0,0,2024-12-12 05:01:00,2025-03-17 04:00:00
+ES 06-25,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 06-25.Last.txt,8,90871,90871,0,0,0,2025-03-13 04:01:00,2025-06-16 04:00:00
+ES 09-25,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 09-25.Last.txt,9,91521,91521,0,0,0,2025-06-12 04:01:00,2025-09-15 04:00:00
+ES 12-25,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 12-25.Last.txt,10,91238,91238,0,0,0,2025-09-11 04:01:00,2025-12-15 05:00:00
+ES 03-26,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 03-26.Last.txt,11,87848,87848,0,0,0,2025-12-11 05:01:00,2026-03-16 04:00:00
+ES 06-26,C:\Users\Valued Customer\NT8_Regimes\MacroRegime\data\raw\ES\ES 06-26.Last.txt,12,43316,43316,0,0,0,2026-03-12 04:01:00,2026-04-24 21:00:00

@@ -1,0 +1,1 @@
+trade_date,entry_time,exit_time,symbol,bot_name,model_version,direction,contracts,entry_price,exit_price,gross_pnl,net_pnl,ticks,win_loss,exit_reason,entry_regime,entry_macro,entry_hmm,entry_direction,entry_confidence,entry_conflict,entry_phase,entry_state_age,exit_regime,exit_macro,exit_hmm,exit_confidence,entry_size_pct,entry_velocity,entry_reason_code,account,instrument,notes

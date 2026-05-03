@@ -1,0 +1,551 @@
+# V3D Master Launcher — Setup & Usage Guide
+
+## Overview
+
+The V3D system now has **ONE master batch file** that orchestrates the entire pre-market workflow.
+
+**File:** `V3D_PreMarket_Master.bat`
+
+**What it does:**
+1. ✅ System health check (junction, folders, Python scripts)
+2. ✅ Generate yesterday's regime analysis report
+3. ✅ Start 3-stage live pipeline (Macro, HMM, Supervisor)
+4. ✅ Wait 60 seconds for initial data generation
+5. ✅ Verify Latest.csv files created
+6. ✅ Display status summary + diagnostics
+7. ✅ Show next steps (load NT8, enable bots, etc.)
+
+**Runtime:** 3-5 minutes  
+**Run when:** Every morning 08:00-08:30 ET (before market open)
+
+---
+
+## Installation
+
+### Step 1: Copy Files to Scripts Folder
+
+Copy all files to `C:\V3D\Scripts\`:
+
+```
+V3D_PreMarket_Master.bat          ← MASTER LAUNCHER (run this)
+V3D_EndOfDay_Shutdown.bat         ← End-of-day companion script
+V3D_Regime_Analysis.py            ← Analysis engine
+Generate_Daily_Regime_Report.bat  ← Standalone report generator (optional)
+```
+
+### Step 2: Verify Prerequisites
+
+**Required Python scripts already in C:\V3D\Scripts\:**
+- MacroRegimeBuilder_V3D.py (Stage A)
+- HMMWatchdog_V3D.py (Stage B)
+- RegimeSupervisor_V3D.py (Stage C)
+
+**Required data files:**
+- C:\V3D\Exports\NQ_1min_export.txt (NT8 LiveDataExporter creates this)
+- C:\V3D\Exports\ES_1min_export.txt
+
+**Required folder structure:**
+```
+C:\V3D\
+├── Scripts\          ← Python scripts + batch files
+├── V3D\              ← Stage outputs (Latest.csv files)
+├── Backtest\         ← Full history files
+├── Reports\          ← Auto-created by master launcher
+├── Exports\          ← Raw 1-min data from NT8
+└── V3D\History\      ← Historical regime archive
+```
+
+The master launcher will auto-create missing folders.
+
+---
+
+## Complete Daily Workflow
+
+### Morning Routine (08:00-08:30 ET)
+
+**Step 1: Run the Master Launcher (ONE COMMAND)**
+
+```batch
+cd C:\V3D\Scripts
+V3D_PreMarket_Master.bat
+```
+
+**What happens automatically:**
+
+```
+[Step 1/7] Verifying system paths...
+           [OK] C:\V3D junction verified
+           [OK] All system folders verified
+
+[Step 2/7] Checking Python scripts...
+           [OK] Core Python scripts verified
+
+[Step 3/7] Checking export data files...
+           [OK] Export data files verified
+
+[Step 4/7] Generating yesterday's regime analysis report...
+           Analyzing date: 2026-04-26
+           [OK] Report saved to C:\V3D\Reports\
+
+[Step 5/7] Starting V3D Live Pipeline (3 stages)...
+           This will open 3 command windows:
+           - Stage A: MacroRegimeBuilder (every 30 sec)
+           - Stage B: HMMWatchdog (every 30 sec)
+           - Stage C: RegimeSupervisor (every 30 sec)
+           
+           IMPORTANT: Leave all 3 windows OPEN during market hours
+
+[Step 6/7] Waiting for initial data generation (60 seconds)...
+
+[Step 7/7] Verifying pipeline outputs...
+           [OK] NQ_RegimeMatrix_Latest.csv exists
+           [OK] ES_RegimeMatrix_Latest.csv exists
+```
+
+**You'll see 3 new CMD windows open:**
+- `V3D-StageA-MacroRegime`
+- `V3D-StageB-HMMWatchdog`
+- `V3D-StageC-Supervisor`
+
+**Leave these open all day!**
+
+---
+
+**Step 2: Review Yesterday's Report (5 minutes)**
+
+The master launcher auto-generates this report:
+
+```
+C:\V3D\Reports\PreMarket_Report_YYYYMMDD.txt
+```
+
+Open it and review:
+- Which regime dominated yesterday?
+- Which bots had the most opportunities?
+- Did regimes persist or flip frequently?
+- What regime ended the day?
+
+---
+
+**Step 3: Load NinjaTrader 8 (2 minutes)**
+
+1. Open NT8
+2. Load NQ chart with RegimeMatrixHUD_V3D indicator
+3. Load ES chart with RegimeMatrixHUD_V3D indicator
+4. Load your 5 strategy bots in Strategy Analyzer (keep DISABLED)
+
+**Expected HUD state during pre-market:**
+```
+REGIME: UNKNOWN        DIR: UNKNOWN  CONF: 0  |  CONFLICT: 00
+MACRO: UNKNOWN  |  HMM: UNKNOWN  |  VEL: 0.00  |  AGE: 0 bars
+WHY: INIT  |  PHASE: UNKNOWN
+```
+
+This is correct behavior. HUD will update at 09:35 ET.
+
+---
+
+### Market Open (09:30-09:45 ET)
+
+**Step 4: Wait for First Checkpoint (09:35 ET)**
+
+The HUD will update with the first regime classification:
+
+```
+REGIME: ROTATION_LIQUID    DIR: NEUTRAL  CONF: 45  |  CONFLICT: 08
+MACRO: BALANCE  |  HMM: Balance  |  VEL: 0.23  |  AGE: 1 bars
+MOMO:ON  EXP:OFF  PINE:ON  ADX_DI:ON  LONG:ON  SHORT:OFF
+WHY: BALANCED_TWO_SIDED  |  PHASE: OPENING_AUCTION
+```
+
+(This is an example - actual regime will vary)
+
+---
+
+**Step 5: Enable Bots Based on Regime**
+
+**If TREND_EXPANSION:**
+- ✅ Enable: Expansion_V3D
+- ✅ Enable: Momentum_V3D
+- ❌ Keep disabled: Fader, Sniper, ADX_DI
+
+**If TREND_COMPRESSION:**
+- ✅ Enable: Momentum_V3D
+- ✅ Enable: Sniper_V3D
+- ❌ Keep disabled: Expansion, Fader, ADX_DI
+
+**If ROTATION_LIQUID:**
+- ✅ Enable: Fader_V3D
+- ✅ Enable: ADX_DI_V3D
+- ✅ Enable: Momentum_V3D
+- ❌ Keep disabled: Expansion, Sniper
+
+**If ROTATION_ILLIQUID or TRANSITION:**
+- ❌ Keep ALL bots disabled
+- Wait for regime to resolve
+
+---
+
+### During Market Hours (09:45-16:00 ET)
+
+**Monitoring:**
+- HUD updates every 5 minutes at checkpoint times
+- Watch for regime changes (HUD color changes, regime label updates)
+- Bots will auto-disable if HUD permissions change to 0
+- Monitor the 3 Python pipeline windows for update logs
+
+**If something looks wrong:**
+- Check the 3 pipeline windows for errors
+- Verify Latest.csv files are updating:
+  ```batch
+  dir C:\V3D\V3D\*_Latest.csv /T:W
+  ```
+- Check HUD banner (should be GREEN/FRESH during RTH)
+
+---
+
+### End of Day (16:15 ET)
+
+**Step 6: Run the Shutdown Script**
+
+```batch
+cd C:\V3D\Scripts
+V3D_EndOfDay_Shutdown.bat
+```
+
+**What happens automatically:**
+
+```
+[Step 1/4] Stopping V3D pipeline processes...
+           Stopping Python processes...
+           [OK] Python processes stopped
+
+[Step 2/4] Generating end-of-day regime analysis...
+           Analyzing today's session...
+           [OK] Report saved to C:\V3D\Reports\
+
+[Step 3/4] Archiving today's regime data...
+           [OK] NQ regime data archived to History
+           [OK] ES regime data archived to History
+
+[Step 4/4] Generating summary statistics...
+           NQ History rows: 14,951
+           ES History rows: 14,934
+```
+
+**Review the EOD report:**
+```
+C:\V3D\Reports\EOD_Report_YYYYMMDD.txt
+```
+
+Compare to this morning's pre-market report:
+- Did today's regime match yesterday's patterns?
+- Which bots traded most?
+- Any unexpected regime transitions?
+
+---
+
+## What the Master Launcher Does Step-by-Step
+
+### Health Checks (Steps 1-3)
+
+**1. Verify C:\V3D junction exists**
+- If missing → shows error, tells you to run `V3D_Setup_Junction.bat`
+
+**2. Verify critical folders exist**
+- Creates missing folders (Reports, Backtest)
+- Fails if core folders missing (Scripts, V3D, Exports)
+
+**3. Verify Python scripts exist**
+- Checks for MacroRegimeBuilder_V3D.py
+- Checks for HMMWatchdog_V3D.py
+- Checks for RegimeSupervisor_V3D.py
+- Warns if V3D_Regime_Analysis.py missing (optional)
+
+**4. Verify export data files exist**
+- Checks NQ_1min_export.txt
+- Checks ES_1min_export.txt
+- Fails if missing (NT8 LiveDataExporter must be running)
+
+---
+
+### Report Generation (Step 4)
+
+**Auto-generates yesterday's regime analysis:**
+- Calls `V3D_Regime_Analysis.py --date YESTERDAY --symbol BOTH`
+- Saves to `C:\V3D\Reports\PreMarket_Report_YYYYMMDD.txt`
+- Contains:
+  - Regime distribution
+  - Bot opportunity analysis
+  - Regime duration statistics
+  - Intraday timeline
+  - Transition probabilities
+
+**If report generation fails:**
+- Shows warning but continues (non-critical)
+
+---
+
+### Pipeline Launch (Step 5)
+
+**Opens 3 separate CMD windows with titled processes:**
+
+**Window 1: V3D-StageA-MacroRegime**
+```
+python MacroRegimeBuilder_V3D.py --live --symbol BOTH --interval 30
+```
+
+**Window 2: V3D-StageB-HMMWatchdog**
+```
+python HMMWatchdog_V3D.py --live --symbol BOTH --interval 30
+```
+
+**Window 3: V3D-StageC-Supervisor**
+```
+python RegimeSupervisor_V3D.py --live --symbol BOTH --interval 30
+```
+
+**Each window:**
+- Updates every 30 seconds
+- Processes both NQ and ES
+- Logs activity to console
+- Stays open until you close it (or run shutdown script)
+
+---
+
+### Verification (Steps 6-7)
+
+**Waits 60 seconds for initial data generation**
+- First run takes ~30-60 seconds to process data
+- Master launcher pauses to let pipeline stabilize
+
+**Checks if Latest.csv files created:**
+- `C:\V3D\V3D\NQ_RegimeMatrix_Latest.csv`
+- `C:\V3D\V3D\ES_RegimeMatrix_Latest.csv`
+
+**Displays diagnostics:**
+- Python processes running
+- Latest.csv file timestamps
+- Macro/HMM CSV file status
+- Export file status
+
+---
+
+## Troubleshooting
+
+### "C:\V3D junction not found"
+**Solution:**
+```batch
+cd C:\V3D\Scripts
+V3D_Setup_Junction.bat
+```
+(Run as Administrator)
+
+### "Python script not found"
+**Check:**
+```batch
+dir C:\V3D\Scripts\*.py
+```
+All 4 Python files should be present:
+- MacroRegimeBuilder_V3D.py
+- HMMWatchdog_V3D.py
+- RegimeSupervisor_V3D.py
+- V3D_Regime_Analysis.py
+
+### "Export data file not found"
+**Cause:** NT8 LiveDataExporter not running  
+**Solution:**
+1. Open NinjaTrader 8
+2. Load NQ and ES charts (1-minute)
+3. Apply LiveDataExporter indicator to both
+4. Indicator will create the export files
+5. Re-run master launcher
+
+### "Latest.csv not yet created" after 60 seconds
+**Check:**
+1. Look at the 3 pipeline windows - any errors?
+2. Check export files have data:
+   ```batch
+   type C:\V3D\Exports\NQ_1min_export.txt
+   ```
+3. Verify Python packages installed:
+   ```batch
+   pip list | findstr "pandas numpy hmmlearn"
+   ```
+
+### Pipeline windows show errors
+**Common issues:**
+- Missing Python packages (pandas, numpy, hmmlearn, scipy)
+- Export file format incorrect (should be semicolon-delimited)
+- File permissions (run as Administrator)
+
+**Get detailed error:**
+- Take screenshot of error window
+- Check the exact line where it failed
+
+### Report generation fails
+**Non-critical** - pipeline will still start  
+**To fix:**
+1. Run report manually:
+   ```batch
+   python V3D_Regime_Analysis.py --last-session
+   ```
+2. Check error message
+3. Verify Backtest folder has Full.csv files
+
+---
+
+## Command Reference
+
+**Run master launcher:**
+```batch
+cd C:\V3D\Scripts
+V3D_PreMarket_Master.bat
+```
+
+**Run shutdown script:**
+```batch
+cd C:\V3D\Scripts
+V3D_EndOfDay_Shutdown.bat
+```
+
+**Check pipeline status:**
+```batch
+tasklist | findstr python
+```
+
+**Check Latest.csv update time:**
+```batch
+dir C:\V3D\V3D\*_Latest.csv /T:W
+```
+
+**View latest regime state:**
+```batch
+type C:\V3D\V3D\NQ_RegimeMatrix_Latest.csv
+```
+
+**Manually generate report:**
+```batch
+python V3D_Regime_Analysis.py --last-session --symbol BOTH
+```
+
+---
+
+## File Outputs
+
+**After running master launcher, you'll have:**
+
+**Reports folder:**
+```
+C:\V3D\Reports\PreMarket_Report_20260427.txt
+C:\V3D\Reports\EOD_Report_20260427.txt
+```
+
+**Latest.csv files (updated every 30 sec):**
+```
+C:\V3D\V3D\NQ_RegimeMatrix_Latest.csv
+C:\V3D\V3D\ES_RegimeMatrix_Latest.csv
+```
+
+**Intermediate stage outputs:**
+```
+C:\V3D\V3D\NQ_Macro_Regimes_V3D.csv
+C:\V3D\V3D\NQ_HMM_Regimes_V3D.csv
+C:\V3D\V3D\ES_Macro_Regimes_V3D.csv
+C:\V3D\V3D\ES_HMM_Regimes_V3D.csv
+```
+
+**Historical archive:**
+```
+C:\V3D\V3D\History\NQ_RegimeMatrix_History.csv
+C:\V3D\V3D\History\ES_RegimeMatrix_History.csv
+```
+
+---
+
+## Advanced Usage
+
+### Run master launcher in silent mode
+Edit the batch file and remove all `PAUSE` commands.
+
+### Change pipeline update interval
+Edit line in master launcher:
+```
+--interval 30
+```
+Change 30 to desired seconds (e.g., 60 for 1 minute)
+
+### Skip report generation
+Delete or comment out Step 4 section in master launcher.
+
+### Custom report output path
+Edit line:
+```
+--output "C:\V3D\Reports\PreMarket_Report_%date:~-4%%date:~-10,2%%date:~-7,2%.txt"
+```
+
+---
+
+## Safety Features
+
+**Master launcher includes:**
+- Path verification before starting
+- File existence checks
+- Graceful error handling
+- Informative error messages
+- 60-second warmup period
+- Diagnostic output
+
+**Shutdown script includes:**
+- Confirmation prompt before killing Python
+- Graceful process termination
+- Data archiving
+- Report generation
+- Summary statistics
+
+---
+
+## What NOT to Do
+
+❌ **Don't close the 3 pipeline windows during market hours**  
+   → HUD will show STALE and bots will disable
+
+❌ **Don't run multiple instances of master launcher**  
+   → Will create duplicate processes
+
+❌ **Don't manually edit Latest.csv files**  
+   → Python overwrites them every 30 seconds
+
+❌ **Don't delete files while pipeline is running**  
+   → Python may crash mid-write
+
+---
+
+## Quick Checklist
+
+**Every morning (ONE command):**
+```batch
+V3D_PreMarket_Master.bat
+```
+
+**Then:**
+- ☐ Review yesterday's report
+- ☐ Load NT8 charts with HUD
+- ☐ Load bots (keep disabled)
+- ☐ Wait for 09:35
+- ☐ Enable bots based on HUD regime
+
+**Every evening (ONE command):**
+```batch
+V3D_EndOfDay_Shutdown.bat
+```
+
+**Then:**
+- ☐ Review EOD report
+- ☐ Compare to pre-market report
+- ☐ Note regime patterns
+
+---
+
+*End of V3D Master Launcher Setup Guide*
+*Version 1.0 — 2026-04-27*

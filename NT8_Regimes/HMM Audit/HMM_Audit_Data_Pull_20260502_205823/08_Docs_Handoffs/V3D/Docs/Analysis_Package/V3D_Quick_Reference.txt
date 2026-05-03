@@ -1,0 +1,202 @@
+# V3D QUICK REFERENCE CARD
+
+## DAILY PRE-MARKET CHECKLIST (08:00-08:30 ET)
+
+☐ **1. Generate yesterday's regime report** (2 min)
+   ```
+   cd C:\V3D\Scripts
+   Generate_Daily_Regime_Report.bat
+   ```
+
+☐ **2. Start live V3D pipeline** (1 min)
+   ```
+   Run_V3D_Pipeline.bat live
+   ```
+   (Opens 3 windows: Macro, HMM, Supervisor)
+
+☐ **3. Verify Latest.csv updating** (30 sec)
+   ```
+   dir C:\V3D\V3D\*_Latest.csv
+   ```
+   (Should show timestamps < 2 min old)
+
+☐ **4. Load NT8 charts with HUD** (2 min)
+   - NQ chart + RegimeMatrixHUD_V3D
+   - ES chart + RegimeMatrixHUD_V3D
+   - Load bots (keep DISABLED)
+
+☐ **5. Review yesterday's report** (5 min)
+   - Note dominant regime
+   - Note bot opportunities
+   - Note regime transitions
+
+---
+
+## MARKET OPEN (09:30-09:45 ET)
+
+☐ **1. Wait for first checkpoint** (09:35 ET)
+   - HUD will update from UNKNOWN to actual regime
+   - Banner changes from RED/STALE to GREEN/FRESH
+
+☐ **2. Enable appropriate bots based on HUD:**
+
+   **TREND_EXPANSION** → Enable: Expansion, Momentum
+   **TREND_COMPRESSION** → Enable: Momentum, Sniper
+   **ROTATION_LIQUID** → Enable: Fader, ADX_DI, Momentum
+   **ROTATION_ILLIQUID** → WAIT (all bots stay off)
+   **TRANSITION** → WAIT (all bots stay off)
+
+---
+
+## DURING MARKET HOURS (09:45-16:00 ET)
+
+- HUD updates every 5 minutes at checkpoint times
+- Bots auto-disable if HUD permissions → 0
+- Use HUD override buttons for manual control
+- Monitor 3 Python windows (should show update logs)
+
+---
+
+## END OF DAY (16:15 ET)
+
+☐ **1. Close Python windows** (Ctrl+C in each)
+
+☐ **2. Optional: Generate EOD report**
+   ```
+   python V3D_Regime_Analysis.py --last-session
+   ```
+
+☐ **3. Review trade log vs regime matrix**
+   - Did bots fire in correct regimes?
+   - Any regime misclassifications?
+   - Any HUD stale data events?
+
+---
+
+## COMMAND QUICK REFERENCE
+
+**Daily report (yesterday):**
+```
+Generate_Daily_Regime_Report.bat
+```
+
+**Start live pipeline:**
+```
+Run_V3D_Pipeline.bat live
+```
+
+**Stop pipeline:**
+Press Ctrl+C in each of the 3 windows
+
+**Check HMM row count:**
+```
+powershell -Command "(Import-Csv 'C:\V3D\V3D\NQ_HMM_Regimes_V3D.csv').Count"
+```
+
+**View latest regime state:**
+```
+type C:\V3D\V3D\NQ_RegimeMatrix_Latest.csv
+```
+
+**Full history analysis:**
+```
+python V3D_Regime_Analysis.py --full-history --symbol BOTH
+```
+
+---
+
+## FILE LOCATIONS
+
+**Input data:**
+- `C:\V3D\Exports\NQ_1min_export.txt` (raw 1-min bars)
+- `C:\V3D\Exports\ES_1min_export.txt`
+
+**Stage outputs:**
+- `C:\V3D\V3D\NQ_Macro_Regimes_V3D.csv` (Stage A)
+- `C:\V3D\V3D\NQ_HMM_Regimes_V3D.csv` (Stage B)
+- `C:\V3D\V3D\NQ_RegimeMatrix_Latest.csv` (Stage C - HUD reads this)
+
+**Full history:**
+- `C:\V3D\Backtest\NQ_RegimeMatrix_Full.csv` (analysis reads this)
+
+**Reports:**
+- `C:\V3D\Reports\*.txt` (daily reports)
+
+---
+
+## REGIME STATE MEANINGS
+
+**TREND_EXPANSION** (rare - 0.9%)
+- Confirmed breakout, strong velocity
+- Expansion bot allowed
+- Highest conviction trades
+
+**TREND_COMPRESSION** (9-11%)
+- Directional but slowing
+- Momentum + Sniper allowed
+- Good win rate
+
+**ROTATION_LIQUID** (32-37%)
+- Tradable two-sided chop
+- Fader + ADX_DI allowed
+- Most opportunities
+
+**ROTATION_ILLIQUID** (50-52%)
+- Dead chop, narrow range
+- ALL BOTS OFF
+- Stay out
+
+**TRANSITION** (5-6%)
+- Macro/HMM conflict
+- ALL BOTS OFF
+- Danger zone
+
+---
+
+## BOT REGIME ASSIGNMENTS
+
+| Regime | Expansion | Momentum | Fader | ADX_DI | Sniper |
+|--------|-----------|----------|-------|--------|--------|
+| TREND_EXPANSION | ✅ | ✅ | ❌ | ❌ | ❌ |
+| TREND_COMPRESSION | ❌ | ✅ | ❌ | ❌ | ✅ |
+| ROTATION_LIQUID | ❌ | ✅ | ✅ | ✅ | ❌ |
+| ROTATION_ILLIQUID | ❌ | ❌ | ❌ | ❌ | ❌ |
+| TRANSITION | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+---
+
+## TROUBLESHOOTING
+
+**HUD shows STALE during market hours**
+→ Python supervisor not running
+→ Latest.csv not being updated
+→ Check Python windows for errors
+
+**HUD shows UNKNOWN at 09:35**
+→ Stage A or B not producing data
+→ Check export files exist and are updating
+→ Restart pipeline
+
+**Bots enabled but not trading**
+→ Check HUD shows Allow{Bot} = ON
+→ Check bot parameters (ADX floor, CI max, etc.)
+→ Check account is live (not SIM)
+
+**Python windows show errors**
+→ Take screenshot
+→ Check file paths exist
+→ Verify pandas/numpy/hmmlearn installed
+
+---
+
+## KEYBOARD SHORTCUTS (Windows)
+
+- `Windows + R` → Run dialog
+- `Ctrl + C` → Stop Python script
+- `Alt + Tab` → Switch windows
+- `Windows + E` → File Explorer
+
+---
+
+*Keep this card at your desk for quick reference*
+*V3D System — Version 1.0*

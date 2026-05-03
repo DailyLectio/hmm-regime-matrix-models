@@ -1,0 +1,383 @@
+//@version=6
+
+indicator("Volatility Regimes", overlay=true)
+
+const int   DEFAULT_ATR_LENGTH = 14
+const float ATR_MULTIPLIER_1   = 1.0
+const float ATR_MULTIPLIER_2   = 2.0
+const float ATR_MULTIPLIER_3   = 3.0
+
+const color BULL_COLOR         = #26a69aff
+const color BEAR_COLOR         = #ef5350ff
+const color SIGNAL_COLOR       = #ffeb3bff
+const color BAND_COLOR_UPPER   = #2196f380
+const color BAND_COLOR_LOWER   = #f4433680
+const color COMPRESSION_COLOR  = #4caf5015
+const color EXPANSION_COLOR    = #ff980015
+const color HIGH_VOL_COLOR     = #f4433615
+const color EXHAUSTION_COLOR   = #9c27b015
+
+var G1 = "ATR Settings"
+int   atrLengthInput       = input.int(DEFAULT_ATR_LENGTH, "ATR Length", minval=1, maxval=100, group=G1, tooltip="Period for calculating Average True Range. Default 14 bars. Lower values = more sensitive, Higher values = smoother.")
+
+var G2 = "ATR Bands Settings"
+bool  showBandsInput       = input.bool(true, "Show ATR Bands", group=G2, tooltip="Display ATR-based dynamic support and resistance bands around price")
+float band1MultInput       = input.float(ATR_MULTIPLIER_1, "Band 1 Multiplier", minval=0.1, maxval=10.0, step=0.1, group=G2, tooltip="ATR multiplier for closest band (1x ATR = first TP level)")
+float band2MultInput       = input.float(ATR_MULTIPLIER_2, "Band 2 Multiplier", minval=0.1, maxval=10.0, step=0.1, group=G2, tooltip="ATR multiplier for middle band (2x ATR = second TP level)")
+float band3MultInput       = input.float(ATR_MULTIPLIER_3, "Band 3 Multiplier", minval=0.1, maxval=10.0, step=0.1, group=G2, tooltip="ATR multiplier for outer band (3x ATR = extended TP level)")
+
+var G3 = "Volatility Signals"
+bool  showVolSignalsInput  = input.bool(true, "Show Volatility Signals", group=G3, tooltip="Display circle markers when volatility breaks above threshold")
+float volThresholdInput    = input.float(1.5, "Volatility Threshold", minval=0.5, maxval=5.0, step=0.1, group=G3, tooltip="ATR multiplier threshold for volatility breakout signals. 1.5 = signal when ATR is 50% above its average")
+
+var G4 = "Trend Detection"
+bool  showTrendInput       = input.bool(true, "Show Trend Signals", group=G4, tooltip="Display up/down arrows when trend direction changes with increasing volatility")
+int   trendLengthInput     = input.int(21, "Trend Smoothing", minval=5, maxval=50, group=G4, tooltip="Period for trend smoothing. Lower = more signals, Higher = stronger trends only")
+
+var G5 = "Visual Settings"
+color upperBandColorInput  = input.color(BAND_COLOR_UPPER, "Upper Band Color", group=G5)
+color lowerBandColorInput  = input.color(BAND_COLOR_LOWER, "Lower Band Color", group=G5)
+color signalColorInput     = input.color(SIGNAL_COLOR, "Volatility Signal Color", group=G5)
+color bullTrendSignalInput = input.color(BULL_COLOR, "Bullish Trend Signal Color", group=G5)
+color bearTrendSignalInput = input.color(BEAR_COLOR, "Bearish Trend Signal Color", group=G5)
+
+var G6 = "════════ VOLATILITY REGIME DETECTION ════════"
+bool  enableRegimeDetection = input.bool(true, "Enable Regime Detection", group=G6, tooltip="Activates volatility regime classification: Compression, Expansion, High Volatility, and Exhaustion phases")
+
+var G7 = "Regime Calculation"
+int   regimeBaselineLengthInput = input.int(50, "ATR Baseline Length", minval=20, maxval=200, group=G7, tooltip="Long-term ATR period for regime comparison. 50-100 recommended for most timeframes")
+string regimeBaselineTypeInput  = input.string("SMA", "Baseline Type", options=["SMA", "EMA"], group=G7, tooltip="SMA = Simple Moving Average (balanced), EMA = Exponential (more responsive)")
+
+var G8 = "Regime Thresholds"
+float compressionThresholdInput = input.float(0.70, "Compression Threshold", minval=0.3, maxval=0.9, step=0.05, group=G8, tooltip="ATR ratio below this = COMPRESSION phase. 0.70 = ATR is 30% below baseline (tight consolidation)")
+float expansionThresholdInput   = input.float(1.15, "Expansion Threshold", minval=1.0, maxval=1.5, step=0.05, group=G8, tooltip="ATR ratio above this = EXPANSION phase. 1.15 = ATR is 15% above baseline (breakout starting)")
+float highVolThresholdInput     = input.float(1.40, "High Volatility Threshold", minval=1.2, maxval=2.0, step=0.05, group=G8, tooltip="ATR ratio above this = HIGH VOLATILITY. 1.40 = ATR is 40% above baseline (strong trend)")
+int   exhaustionLookbackInput   = input.int(5, "Exhaustion Lookback", minval=3, maxval=20, group=G8, tooltip="Bars required to confirm declining ATR after high volatility = EXHAUSTION phase")
+
+var G9 = "Regime Visuals"
+bool  showRegimeBackgroundInput = input.bool(true, "Show Regime Background", group=G9, tooltip="Color chart background based on current volatility regime for quick visual identification")
+bool  showRegimeLabelInput      = input.bool(true, "Show Regime Label", group=G9, tooltip="Display current regime name and ATR ratio in a label on the chart")
+string regimeLabelPositionInput = input.string("Top Right", "Label Position", options=["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group=G9, tooltip="Choose where to display the regime information label")
+color compressionBgColorInput = input.color(COMPRESSION_COLOR, "Compression Background", group=G9, tooltip="Background color for Compression regime (low volatility consolidation)")
+color expansionBgColorInput   = input.color(EXPANSION_COLOR, "Expansion Background", group=G9, tooltip="Background color for Expansion regime (volatility breakout phase)")
+color highVolBgColorInput     = input.color(HIGH_VOL_COLOR, "High Volatility Background", group=G9, tooltip="Background color for High Volatility regime (strong trending)")
+color exhaustionBgColorInput  = input.color(EXHAUSTION_COLOR, "Exhaustion Background", group=G9, tooltip="Background color for Exhaustion regime (trend maturity/pause)")
+
+var G10 = "════════ DYNAMIC STOP LOSS ════════"
+bool  enableDynamicSL      = input.bool(true, "Enable Dynamic Stop Loss", group=G10, tooltip="Automatically calculates optimal stop loss distance based on current market volatility")
+float slMultiplierInput    = input.float(2.0, "Stop Loss ATR Multiplier", minval=0.5, maxval=5.0, step=0.1, group=G10, tooltip="ATR multiplier for stop loss distance. 2.0 = stop loss is 2x ATR away from entry. Higher = wider stops, Lower = tighter stops")
+bool  showSLLinesInput     = input.bool(true, "Show SL Lines", group=G10, tooltip="Display stop loss levels as cross markers on the chart")
+color slBullColorInput     = input.color(#26a69a80, "Bullish SL Color", group=G10, tooltip="Color for bullish (long) stop loss markers")
+color slBearColorInput     = input.color(#ef535080, "Bearish SL Color", group=G10, tooltip="Color for bearish (short) stop loss markers")
+
+var G11 = "════════ TAKE PROFIT LEVELS ════════"
+bool  enableMultipleTP     = input.bool(true, "Enable Multiple TP Levels", group=G11, tooltip="Shows three progressive take profit targets based on ATR multiples for scaling out of positions")
+float tp1MultiplierInput   = input.float(1.5, "TP1 Multiplier", minval=0.5, maxval=5.0, step=0.1, group=G11, tooltip="First take profit target. 1.5 = 1.5x ATR from entry. Use for partial profit taking (e.g., 33% position)")
+float tp2MultiplierInput   = input.float(2.5, "TP2 Multiplier", minval=1.0, maxval=10.0, step=0.5, group=G11, tooltip="Second take profit target. 2.5 = 2.5x ATR from entry. Use for additional scaling (e.g., another 33%)")
+float tp3MultiplierInput   = input.float(4.0, "TP3 Multiplier", minval=2.0, maxval=15.0, step=0.5, group=G11, tooltip="Final take profit target. 4.0 = 4x ATR from entry. Use for remaining position or runners")
+bool  showTPLabelsInput    = input.bool(true, "Show TP Labels", group=G11, tooltip="Display TP1, TP2, TP3 labels on the chart for easy identification")
+color tpColorInput         = input.color(#ffeb3b80, "TP Color", group=G11, tooltip="Color for all take profit level lines and labels")
+
+var G12 = "════════ SUPPORT & RESISTANCE ════════"
+bool  enableSRLevels       = input.bool(true, "Enable S/R Levels", group=G12, tooltip="Identifies dynamic support and resistance zones based on recent price action and ATR volatility")
+int   srLookbackInput      = input.int(20, "S/R Lookback Period", minval=10, maxval=100, group=G12, tooltip="Number of bars to analyze for finding support/resistance. 20 = short-term levels, 50+ = major levels")
+float srStrengthInput      = input.float(1.5, "S/R Strength (ATR)", minval=0.5, maxval=3.0, step=0.1, group=G12, tooltip="ATR multiplier for determining significant S/R zones. Higher = only shows stronger levels")
+color supportColorInput    = input.color(#4caf5060, "Support Color", group=G12, tooltip="Color for support level circles")
+color resistanceColorInput = input.color(#f4433660, "Resistance Color", group=G12, tooltip="Color for resistance level circles")
+
+var G13 = "════════ RISK MANAGEMENT ════════"
+bool  enableRiskCalc       = input.bool(true, "Enable Risk Calculator", group=G13, tooltip="Calculates proper position size based on your account size, risk percentage, and current ATR stop loss")
+float accountSizeInput     = input.float(10000, "Account Size", minval=100, group=G13, tooltip="Your total trading account balance in dollars (or your currency). Used to calculate position sizes")
+float riskPercentInput     = input.float(1.0, "Risk Per Trade (%)", minval=0.1, maxval=10.0, step=0.1, group=G13, tooltip="Maximum % of account to risk per trade. 1% = risk $100 on $10,000 account. Conservative: 0.5-1%, Moderate: 1-2%, Aggressive: 2-5%")
+bool  showPositionSizeInput = input.bool(true, "Show Position Size", group=G13, tooltip="Display calculated position size and dollar risk amount on chart")
+
+var G14 = "════════ ATR PERCENTILE RANKING ════════"
+bool  enableATRPercentile  = input.bool(true, "Enable ATR Percentile", group=G14, tooltip="Shows where current ATR ranks historically. Helps identify extreme volatility conditions vs. normal market behavior")
+int   percentileLookback   = input.int(100, "Percentile Lookback", minval=50, maxval=500, group=G14, tooltip="Historical period for percentile calculation. 100 = compare ATR to last 100 bars. Higher = longer-term comparison")
+bool  showPercentileLabel  = input.bool(true, "Show Percentile Label", group=G14, tooltip="Display ATR percentile ranking on chart. >80% = extremely high volatility, <20% = extremely low volatility")
+
+var G15 = "════════ VOLATILITY CONTRACTION ════════"
+bool  enableVolContraction = input.bool(true, "Enable Contraction Pattern", group=G15, tooltip="Detects periods of tight consolidation (volatility squeeze) that typically precede major breakout moves")
+int   contractionBars      = input.int(7, "Contraction Bars", minval=3, maxval=20, group=G15, tooltip="Number of consecutive bars required to confirm contraction pattern. 7 = one week of consolidation")
+float contractionThreshold = input.float(0.5, "Contraction Threshold", minval=0.3, maxval=0.8, step=0.05, group=G15, tooltip="Maximum ATR ratio during contraction. 0.5 = ATR must stay below 50% of average. Lower = tighter squeeze required")
+bool  showContractionAlert = input.bool(true, "Show Contraction Alerts", group=G15, tooltip="Display yellow triangle when contraction pattern completes. Indicates potential imminent breakout")
+
+getBands(float src, float atrValue, float multiplier) =>
+    upperBand = src + (atrValue * multiplier)
+    lowerBand = src - (atrValue * multiplier)
+    [upperBand, lowerBand]
+
+isVolatilityBreakout(float atrValue, float atrSma, float threshold) =>
+    atrValue > (atrSma * threshold)
+
+getTrendDirection(float src, float atrValue, int length) =>
+    srcSma = ta.sma(src, length)
+    atrSma = ta.sma(atrValue, length)
+    priceAboveSma = src > srcSma
+    atrRising = atrValue > atrSma
+    if priceAboveSma and atrRising
+        1
+    else if not priceAboveSma and atrRising
+        -1
+    else
+        0
+
+getATRBaseline(float atrValue, int length, string baselineType) =>
+    baselineType == "EMA" ? ta.ema(atrValue, length) : ta.sma(atrValue, length)
+
+getATRRatio(float atrValue, float atrBaseline) =>
+    atrBaseline > 0 ? atrValue / atrBaseline : 1.0
+
+isATRDeclining(float atrValue, int lookback) =>
+    declined = true
+    for i = 1 to lookback
+        if atrValue[i] <= atrValue[i + 1]
+            declined := false
+            break
+    declined
+
+detectVolatilityRegime(float atrRatio, float atrValue, float compressionThreshold, float expansionThreshold, float highVolThreshold, int exhaustionLookback) =>
+    int regime = 0
+    bool wasRecentlyHighVol = false
+    for i = 1 to 10
+        if atrValue[i] / ta.sma(atrValue[i], 50) >= highVolThreshold
+            wasRecentlyHighVol := true
+            break
+    if atrRatio >= highVolThreshold
+        regime := 3
+    else if atrRatio >= expansionThreshold
+        regime := 2
+    else if atrRatio < compressionThreshold
+        regime := 1
+    else if wasRecentlyHighVol and isATRDeclining(atrValue, exhaustionLookback)
+        regime := 4
+    else
+        regime := 2
+    regime
+
+getRegimeName(int regime) =>
+    switch regime
+        1 => "COMPRESSION"
+        2 => "EXPANSION"
+        3 => "HIGH VOLATILITY"
+        4 => "EXHAUSTION"
+        => "NEUTRAL"
+
+getRegimeColor(int regime) =>
+    switch regime
+        1 => compressionBgColorInput
+        2 => expansionBgColorInput
+        3 => highVolBgColorInput
+        4 => exhaustionBgColorInput
+        => color(na)
+
+getDynamicStopLoss(float entryPrice, float atrValue, float multiplier, bool isBullish) =>
+    if isBullish
+        entryPrice - (atrValue * multiplier)
+    else
+        entryPrice + (atrValue * multiplier)
+
+getTakeProfitLevels(float entryPrice, float atrValue, bool isBullish) =>
+    tp1 = isBullish ? entryPrice + (atrValue * tp1MultiplierInput) : entryPrice - (atrValue * tp1MultiplierInput)
+    tp2 = isBullish ? entryPrice + (atrValue * tp2MultiplierInput) : entryPrice - (atrValue * tp2MultiplierInput)
+    tp3 = isBullish ? entryPrice + (atrValue * tp3MultiplierInput) : entryPrice - (atrValue * tp3MultiplierInput)
+    [tp1, tp2, tp3]
+
+findSupportResistance(float atrValue, float strength, int lookback) =>
+    highestHigh = ta.highest(high, lookback)
+    lowestLow = ta.lowest(low, lookback)
+    resistance = highestHigh
+    support = lowestLow
+    [support, resistance]
+
+calculatePositionSize(float accountSize, float riskPercent, float entryPrice, float stopLoss) =>
+    riskAmount = accountSize * (riskPercent / 100)
+    stopDistance = math.abs(entryPrice - stopLoss)
+    positionSize = stopDistance > 0 ? riskAmount / stopDistance : 0
+    positionSize
+
+getATRPercentile(float currentATR, int lookback) =>
+    float sum = 0
+    int count = 0
+    for i = 0 to lookback - 1
+        if not na(ta.atr(atrLengthInput)[i])
+            if ta.atr(atrLengthInput)[i] < currentATR
+                count := count + 1
+            sum := sum + 1
+    percentile = sum > 0 ? (count / sum) * 100 : 50
+    percentile
+
+isVolatilityContraction(float atrValue, int bars, float threshold) =>
+    contracted = true
+    avgATR = ta.sma(atrValue, bars * 2)
+    for i = 0 to bars - 1
+        if atrValue[i] > avgATR * threshold
+            contracted := false
+            break
+    contracted
+
+float atrValue = ta.atr(atrLengthInput)
+float atrSma = ta.sma(atrValue, atrLengthInput)
+
+[upperBand1, lowerBand1] = getBands(close, atrValue, band1MultInput)
+[upperBand2, lowerBand2] = getBands(close, atrValue, band2MultInput)
+[upperBand3, lowerBand3] = getBands(close, atrValue, band3MultInput)
+
+bool volBreakout = isVolatilityBreakout(atrValue, atrSma, volThresholdInput)
+bool volSignal = volBreakout and not volBreakout[1]
+
+int trendDirection = getTrendDirection(close, atrValue, trendLengthInput)
+bool bullishTrend = trendDirection == 1 and trendDirection[1] != 1
+bool bearishTrend = trendDirection == -1 and trendDirection[1] != -1
+
+float atrBaseline = getATRBaseline(atrValue, regimeBaselineLengthInput, regimeBaselineTypeInput)
+float atrRatio = getATRRatio(atrValue, atrBaseline)
+int currentRegime = enableRegimeDetection ? detectVolatilityRegime(atrRatio, atrValue, compressionThresholdInput, expansionThresholdInput, highVolThresholdInput, exhaustionLookbackInput) : 0
+string regimeName = getRegimeName(currentRegime)
+color regimeColor = getRegimeColor(currentRegime)
+bool regimeChanged = currentRegime != currentRegime[1] and currentRegime > 0
+
+float bullStopLoss = enableDynamicSL ? getDynamicStopLoss(close, atrValue, slMultiplierInput, true) : na
+float bearStopLoss = enableDynamicSL ? getDynamicStopLoss(close, atrValue, slMultiplierInput, false) : na
+
+[bullTP1_calc, bullTP2_calc, bullTP3_calc] = getTakeProfitLevels(close, atrValue, true)
+[bearTP1_calc, bearTP2_calc, bearTP3_calc] = getTakeProfitLevels(close, atrValue, false)
+
+float bullTP1 = enableMultipleTP ? bullTP1_calc : na
+float bullTP2 = enableMultipleTP ? bullTP2_calc : na
+float bullTP3 = enableMultipleTP ? bullTP3_calc : na
+float bearTP1 = enableMultipleTP ? bearTP1_calc : na
+float bearTP2 = enableMultipleTP ? bearTP2_calc : na
+float bearTP3 = enableMultipleTP ? bearTP3_calc : na
+
+[support_calc, resistance_calc] = findSupportResistance(atrValue, srStrengthInput, srLookbackInput)
+float supportLevel = enableSRLevels ? support_calc : na
+float resistanceLevel = enableSRLevels ? resistance_calc : na
+
+float positionSize = enableRiskCalc ? calculatePositionSize(accountSizeInput, riskPercentInput, close, bullStopLoss) : na
+
+float atrPercentile = enableATRPercentile ? getATRPercentile(atrValue, percentileLookback) : na
+
+bool contractionPattern = enableVolContraction ? isVolatilityContraction(atrValue, contractionBars, contractionThreshold) : false
+bool contractionSignal = contractionPattern and not contractionPattern[1]
+
+plot(showBandsInput ? upperBand1 : na, title="Upper Band 1", color=upperBandColorInput, linewidth=1)
+plot(showBandsInput ? lowerBand1 : na, title="Lower Band 1", color=lowerBandColorInput, linewidth=1)
+plot(showBandsInput ? upperBand2 : na, title="Upper Band 2", color=color.new(upperBandColorInput, 60), linewidth=1)
+plot(showBandsInput ? lowerBand2 : na, title="Lower Band 2", color=color.new(lowerBandColorInput, 60), linewidth=1)
+plot(showBandsInput ? upperBand3 : na, title="Upper Band 3", color=color.new(upperBandColorInput, 80), linewidth=1)
+plot(showBandsInput ? lowerBand3 : na, title="Lower Band 3", color=color.new(lowerBandColorInput, 80), linewidth=1)
+
+plotshape(series=showVolSignalsInput and volSignal, title="Volatility Breakout", style=shape.circle, location=location.abovebar, color=signalColorInput, size=size.tiny)
+plotshape(series=showTrendInput and bullishTrend, title="Bullish Trend Signal", style=shape.labelup, location=location.belowbar, color=bullTrendSignalInput, text="↑", textcolor=color.white, size=size.tiny)
+plotshape(series=showTrendInput and bearishTrend, title="Bearish Trend Signal", style=shape.labeldown, location=location.abovebar, color=bearTrendSignalInput, text="↓", textcolor=color.white, size=size.tiny)
+
+bgcolor(enableRegimeDetection and showRegimeBackgroundInput ? regimeColor : na, title="Regime Background")
+
+var line tpLineUpper = na
+var line tpLineLower = na
+if barstate.islast
+    line.delete(tpLineUpper)
+    line.delete(tpLineLower)
+    tpLineUpper := line.new(x1=bar_index - 2, y1=upperBand1, x2=bar_index + 2, y2=upperBand1, color=upperBandColorInput, width=2, style=line.style_dotted)
+    tpLineLower := line.new(x1=bar_index - 2, y1=lowerBand1, x2=bar_index + 2, y2=lowerBand1, color=lowerBandColorInput, width=2, style=line.style_dotted)
+
+var label regimeLabel = na
+if enableRegimeDetection and showRegimeLabelInput
+    if barstate.islast
+        label.delete(regimeLabel)
+        labelY = regimeLabelPositionInput == "Top Left" or regimeLabelPositionInput == "Top Right" ? high * 1.02 : low * 0.98
+        labelStyle = regimeLabelPositionInput == "Top Left" or regimeLabelPositionInput == "Top Right" ? label.style_label_down : label.style_label_up
+        labelText = "REGIME: " + regimeName + "\nRatio: " + str.tostring(atrRatio, "#.##")
+        labelColor = switch currentRegime
+            1 => color.new(#4caf50, 10)
+            2 => color.new(#ff9800, 10)
+            3 => color.new(#f44336, 10)
+            4 => color.new(#9c27b0, 10)
+            => color.new(color.gray, 10)
+        regimeLabel := label.new(x=bar_index, y=labelY, text=labelText, style=labelStyle, color=labelColor, textcolor=color.white, size=size.normal)
+
+plotshape(series=enableRegimeDetection and regimeChanged, title="Regime Change", style=shape.diamond, location=location.top, color=regimeColor, text="R", size=size.tiny)
+
+plot(enableDynamicSL and showSLLinesInput and trendDirection == 1 ? bullStopLoss : na, title="Bull Stop Loss", color=slBullColorInput, linewidth=2, style=plot.style_cross)
+plot(enableDynamicSL and showSLLinesInput and trendDirection == -1 ? bearStopLoss : na, title="Bear Stop Loss", color=slBearColorInput, linewidth=2, style=plot.style_cross)
+
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+if enableMultipleTP and barstate.islast
+    line.delete(tp1Line)
+    line.delete(tp2Line)
+    line.delete(tp3Line)
+    
+    if trendDirection == 1
+        tp1Line := line.new(bar_index - 3, bullTP1, bar_index + 3, bullTP1, color=tpColorInput, width=1, style=line.style_dashed)
+        tp2Line := line.new(bar_index - 3, bullTP2, bar_index + 3, bullTP2, color=tpColorInput, width=1, style=line.style_dashed)
+        tp3Line := line.new(bar_index - 3, bullTP3, bar_index + 3, bullTP3, color=tpColorInput, width=1, style=line.style_dashed)
+    else if trendDirection == -1
+        tp1Line := line.new(bar_index - 3, bearTP1, bar_index + 3, bearTP1, color=tpColorInput, width=1, style=line.style_dashed)
+        tp2Line := line.new(bar_index - 3, bearTP2, bar_index + 3, bearTP2, color=tpColorInput, width=1, style=line.style_dashed)
+        tp3Line := line.new(bar_index - 3, bearTP3, bar_index + 3, bearTP3, color=tpColorInput, width=1, style=line.style_dashed)
+
+var label tp1Label = na
+var label tp2Label = na
+var label tp3Label = na
+if enableMultipleTP and showTPLabelsInput and barstate.islast
+    label.delete(tp1Label)
+    label.delete(tp2Label)
+    label.delete(tp3Label)
+    
+    if trendDirection == 1
+        tp1Label := label.new(bar_index, bullTP1, "TP1", style=label.style_label_left, color=tpColorInput, textcolor=color.black, size=size.tiny)
+        tp2Label := label.new(bar_index, bullTP2, "TP2", style=label.style_label_left, color=tpColorInput, textcolor=color.black, size=size.tiny)
+        tp3Label := label.new(bar_index, bullTP3, "TP3", style=label.style_label_left, color=tpColorInput, textcolor=color.black, size=size.tiny)
+    else if trendDirection == -1
+        tp1Label := label.new(bar_index, bearTP1, "TP1", style=label.style_label_left, color=tpColorInput, textcolor=color.black, size=size.tiny)
+        tp2Label := label.new(bar_index, bearTP2, "TP2", style=label.style_label_left, color=tpColorInput, textcolor=color.black, size=size.tiny)
+        tp3Label := label.new(bar_index, bearTP3, "TP3", style=label.style_label_left, color=tpColorInput, textcolor=color.black, size=size.tiny)
+
+plot(enableSRLevels ? supportLevel : na, title="Support", color=supportColorInput, linewidth=2, style=plot.style_circles)
+plot(enableSRLevels ? resistanceLevel : na, title="Resistance", color=resistanceColorInput, linewidth=2, style=plot.style_circles)
+
+var label riskLabel = na
+if enableRiskCalc and showPositionSizeInput and barstate.islast
+    label.delete(riskLabel)
+    riskText = "Position Size: " + str.tostring(positionSize, "#.##") + "\nRisk: $" + str.tostring(accountSizeInput * riskPercentInput / 100, "#.##")
+    riskLabel := label.new(bar_index, low * 0.95, riskText, style=label.style_label_up, color=color.new(color.blue, 10), textcolor=color.white, size=size.small)
+
+var label percentileLabel = na
+if enableATRPercentile and showPercentileLabel and barstate.islast
+    label.delete(percentileLabel)
+    percentileText = "ATR Percentile: " + str.tostring(atrPercentile, "#") + "%"
+    percentileColor = atrPercentile > 80 ? color.new(color.red, 10) : atrPercentile < 20 ? color.new(color.green, 10) : color.new(color.orange, 10)
+    percentileLabel := label.new(bar_index, high * 1.05, percentileText, style=label.style_label_down, color=percentileColor, textcolor=color.white, size=size.small)
+
+plotshape(series=enableVolContraction and showContractionAlert and contractionSignal, title="Volatility Contraction", style=shape.triangleup, location=location.belowbar, color=color.new(color.yellow, 0), text="VC", size=size.small)
+
+atrCrossover = ta.crossover(close, upperBand1)
+atrCrossunder = ta.crossunder(close, lowerBand1)
+
+if volSignal
+    alert("ATR Volatility Breakout", alert.freq_once_per_bar_close)
+if bullishTrend
+    alert("ATR Bullish Trend Signal", alert.freq_once_per_bar_close)
+if bearishTrend
+    alert("ATR Bearish Trend Signal", alert.freq_once_per_bar_close)
+if atrCrossover
+    alert("Price Above ATR Band 1", alert.freq_once_per_bar_close)
+if atrCrossunder
+    alert("Price Below ATR Band 1", alert.freq_once_per_bar_close)
+if enableRegimeDetection and currentRegime == 1 and currentRegime[1] != 1
+    alert("Volatility Regime: COMPRESSION", alert.freq_once_per_bar_close)
+if enableRegimeDetection and currentRegime == 2 and currentRegime[1] != 2
+    alert("Volatility Regime: EXPANSION", alert.freq_once_per_bar_close)
+if enableRegimeDetection and currentRegime == 3 and currentRegime[1] != 3
+    alert("Volatility Regime: HIGH VOLATILITY", alert.freq_once_per_bar_close)
+if enableRegimeDetection and currentRegime == 4 and currentRegime[1] != 4
+    alert("Volatility Regime: EXHAUSTION", alert.freq_once_per_bar_close)
+if enableVolContraction and contractionSignal
+    alert("Volatility Contraction Pattern Detected - Breakout Imminent", alert.freq_once_per_bar_close)
+if enableATRPercentile and atrPercentile > 90 and atrPercentile[1] <= 90
+    alert("ATR at Extreme High (>90th Percentile)", alert.freq_once_per_bar_close)
+if enableATRPercentile and atrPercentile < 10 and atrPercentile[1] >= 10
+    alert("ATR at Extreme Low (<10th Percentile)", alert.freq_once_per_bar_close)

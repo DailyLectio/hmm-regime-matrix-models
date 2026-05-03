@@ -1,0 +1,8 @@
+Data Quality Report 20260501
+Generated: 2026-05-02 19:39:27
+Rows: 10
+
+Flag counts:
+  OK: 10
+
+Non-OK rows:
