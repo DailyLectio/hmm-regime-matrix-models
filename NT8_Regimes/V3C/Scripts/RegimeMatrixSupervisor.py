@@ -814,6 +814,30 @@ def classify_v3c_candidate(
             "reason": "HIGH_CONFLICT_STAGE_A_B_OR_PRICE_ACTION",
         }
 
+    # Phase One Part 4 — HMM Transition is not a directional state. If macro
+    # says trend while HMM is Transition, require explicit velocity plus IB
+    # extension before allowing TREND_COMPRESSION; otherwise close the lane.
+    if macro_trend and hmm_transition:
+        if (
+            direction in {"LONG", "SHORT"}
+            and ib_ext >= th.expansion_ib_ext
+            and abs_velocity >= th.expansion_velocity
+        ):
+            return {
+                "candidate": "TREND_COMPRESSION",
+                "direction": direction,
+                "confidence": 62,
+                "conflict": conflict,
+                "reason": "TRANSITION_MACRO_VELOCITY_IB_CONFIRMED",
+            }
+        return {
+            "candidate": "TRANSITION",
+            "direction": "NONE",
+            "confidence": 52,
+            "conflict": conflict,
+            "reason": "HMM_TRANSITION_TREND_BLOCKED",
+        }
+
     # TREND_EXPANSION: HMM direction + VWAP agreement + IB extension + velocity.
     if (
         hmm_trending

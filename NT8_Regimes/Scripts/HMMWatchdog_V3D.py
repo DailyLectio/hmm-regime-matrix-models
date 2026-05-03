@@ -394,8 +394,8 @@ def assign_labels(model: hmm.GaussianHMM, feature_names: list,
     assigned[trans] = "Transition"
 
     # Diagnostic: label confidence guard.
-    vwap_separation = abs(vwap_means[tu] - vwap_means[td])
-    ambiguous = vwap_separation < LABEL_VWAP_MIN_SEPARATION
+    vwap_separation = float(abs(vwap_means[tu] - vwap_means[td]))
+    ambiguous = bool(vwap_separation < LABEL_VWAP_MIN_SEPARATION)
     if ambiguous:
         log.warning(
             f"LABEL CONFIDENCE WARNING: TrendUp/TrendDown vwap_dist_atr "
@@ -407,7 +407,7 @@ def assign_labels(model: hmm.GaussianHMM, feature_names: list,
 
     diagnostics = {
         "ambiguous_fit": ambiguous,
-        "vwap_separation": round(vwap_separation, 6),
+        "vwap_separation": round(float(vwap_separation), 6),
         "tu_vwap_mean": round(float(vwap_means[tu]), 6),
         "td_vwap_mean": round(float(vwap_means[td]), 6),
         "tu_ret_mean":  round(float(ret_means[tu]), 6),

@@ -1,21 +1,21 @@
 {
-  "NQ_last_fit_rows": 0,
-  "NQ_last_fit_ts": "2026-05-01T16:00:21.828196",
-  "NQ_last_ll": 35461.1653,
+  "NQ_last_fit_rows": 1024627,
+  "NQ_last_fit_ts": "2026-05-03T12:42:46.690224",
+  "NQ_last_ll": -210359.2605,
   "NQ_label_map": {
-    "0": "TrendUp",
+    "2": "TrendUp",
     "3": "TrendDown",
-    "2": "Balance",
-    "1": "Transition"
-  },
-  "ES_last_fit_rows": 0,
-  "ES_last_fit_ts": "2026-05-01T16:00:36.516337",
-  "ES_last_ll": 36433.6992,
-  "ES_label_map": {
-    "3": "TrendUp",
-    "2": "TrendDown",
     "0": "Balance",
     "1": "Transition"
+  },
+  "ES_last_fit_rows": 1023028,
+  "ES_last_fit_ts": "2026-05-03T12:43:21.301773",
+  "ES_last_ll": -205100.661,
+  "ES_label_map": {
+    "1": "TrendUp",
+    "0": "TrendDown",
+    "2": "Balance",
+    "3": "Transition"
   },
   "NQ_last_fit_rth_rows": 293330,
   "NQ_last_fit_5m_ts": "2026-05-01T16:00:00",
@@ -24,5 +24,21 @@
   "NQ_last_seen_raw_rows": 1030297,
   "NQ_last_seen_rth_rows": 293330,
   "ES_last_seen_raw_rows": 1028273,
-  "ES_last_seen_rth_rows": 293844
+  "ES_last_seen_rth_rows": 293844,
+  "NQ_label_diagnostics": {
+    "ambiguous_fit": false,
+    "vwap_separation": 2.945353,
+    "tu_vwap_mean": 1.907292,
+    "td_vwap_mean": -1.038061,
+    "tu_ret_mean": 0.000133,
+    "td_ret_mean": -0.000102
+  },
+  "ES_label_diagnostics": {
+    "ambiguous_fit": false,
+    "vwap_separation": 2.879814,
+    "tu_vwap_mean": 1.869098,
+    "td_vwap_mean": -1.010716,
+    "tu_ret_mean": 0.000106,
+    "td_ret_mean": -8.2e-05
+  }
 }

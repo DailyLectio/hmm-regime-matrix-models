@@ -515,14 +515,22 @@ def extreme_thrust_override(phase: str, macro_row: pd.Series, symbol: str):
         vel = float(macro_row.get("velocity_3cp_atr", 0.0))
     except Exception:
         vel = 0.0
+    try:
+        ib_ext = abs(float(macro_row.get("ib_extension_pct", 0.0)))
+    except Exception:
+        ib_ext = 0.0
 
     if pd.isna(nm):
         nm = 0.0
     if pd.isna(vel):
         vel = 0.0
+    if pd.isna(ib_ext):
+        ib_ext = 0.0
 
     thresh = EXTREME_THRUST_THRESH.get(symbol, 1.50)
-    if abs(nm) >= thresh and abs(vel) >= thresh * 0.60:
+    if (abs(nm) >= thresh
+            and abs(vel) >= thresh * 0.60
+            and ib_ext >= THRESHOLDS[symbol]["ib_strong"]):
         direction = "LONG" if nm > 0 else "SHORT"
         return {
             "FinalRegime": "TREND_COMPRESSION",
@@ -564,6 +572,7 @@ def classify_final_regime(
     hmm_regime = row.get("RegimeLabel", "")
     playbook_state = row.get("playbook_state", "")
     ib_width_atr = row.get("ib_width_atr", 0.0)
+    ib_ext = abs(row.get("ib_extension_pct", 0.0))
     two_sided = row.get("two_sided_trade_flag", 0)
     vel = abs(row.get("velocity_3cp_atr", 0.0))
     compression_threshold = (
@@ -582,6 +591,21 @@ def classify_final_regime(
     # PRIORITY 1: TRANSITION (danger override)
     if conflict_score >= CONFLICT_THRESHOLD:
         return "TRANSITION", "NEUTRAL", 0, "HIGH_CONFLICT"
+
+    # Phase One Part 4 — close the silent leak where Macro=TREND plus
+    # HMM=Transition became actionable TREND_COMPRESSION. Transition only
+    # gets a directional lane when price also proves velocity and IB extension.
+    if macro_regime == "TREND" and hmm_regime == "Transition":
+        transition_trend_confirmed = (
+            direction != "NEUTRAL"
+            and kalman_score >= compression_threshold
+            and vel >= THRESHOLDS[symbol]["velocity_strong"]
+            and ib_ext >= THRESHOLDS[symbol]["ib_strong"]
+        )
+        if transition_trend_confirmed:
+            confidence = int(kalman_score * 0.65)
+            return "TREND_COMPRESSION", direction, confidence, "TRANSITION_MACRO_VELOCITY_IB_CONFIRMED"
+        return "TRANSITION", "NEUTRAL", 0, "HMM_TRANSITION_TREND_BLOCKED"
     
     # PRIORITY 2: TREND_EXPANSION
     if kalman_score >= trend_threshold:

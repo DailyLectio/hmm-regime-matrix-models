@@ -57,8 +57,8 @@ ECHO  Output files created:
 ECHO    C:\V3D\V3D\NQ_HMM_Regimes_V3D.csv
 ECHO    C:\V3D\V3D\ES_HMM_Regimes_V3D.csv
 ECHO.
-ECHO  These files should now contain ~14,965 rows each
-ECHO  (20 checkpoints/day × ~750 days)
+ECHO  These files should now contain roughly 59,000 rows each
+ECHO  (5-minute RTH HMM bars across the full export history)
 ECHO.
 ECHO  Next step: Run Run_Supervisor_Batch.bat to merge
 ECHO  macro and HMM regimes into final classifications.
