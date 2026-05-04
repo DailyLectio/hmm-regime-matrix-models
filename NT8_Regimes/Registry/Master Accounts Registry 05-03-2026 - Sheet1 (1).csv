@@ -1,0 +1,32 @@
+,Chart Location,Tab,Tab Name,,Chart,Strategy,Account,Template Name
+V1A,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+V3C,Top left,1,Expansion V1A ,RTH,Uni 40-80-120,V3_Expansion_Rider_V3C,SimV3C-NQ-1A,NQ Fast 40-80-120
+,Top left,2,Expansion B 60,RTH,Uni 60-120-180,V3_Expansion_Rider_V3C,SimV3C-NQ-1B,NQ Clean 60-120-180
+,Top Middle,1,Compression Sniper A,RTH,Uni 20-40-60,NQ VC3-A Compression Fast ,SimV3C-NQ-2A,NQ VC3-A Compression Fast 20-40-60
+,Top Middle,2,Compression Sniper B,RTH,Uni 16-32-48,NQ V3C Compression Clean B,SimV3C-NQ-2B,NQ V3C Compression Clean B 16-32-48
+,Top Middle,3,Compression Sniper C 20-40-60,RTH,Uni 20-40-60,V3_Compression_Sniper_V3C,SimV3C-NQ-2C,NQ VC3-A Compression Fast 20-40-60
+,Top Right,1,Value Fader A,ETH,5 min candle,V3_Value_Fader,SimV3C-NQ-3A,Value Fader A 5m
+,Top Right,2,Value Fader B,ETH,3 min candle,V3_Value_Fader_V3C 3m,SimV3C-NQ-3B,Value Fader B 3m
+,Bottom Left,1,Momentum Slope A,RTH,5 min candle,Momo_V3C,SimV3C-NQ-4A,Momo 5M Hysteresis
+,Bottom Left,2,Momentum Slope B,RTH,5 min candle,Momo_V3C,SimV3C-NQ-4B,Momo 5m Simple
+,Bottom Middle,1,Momo 1mHA OG,RTH,1 min Heiken Ashi,MomentumSlopeStrategy v1.2,SimMomo1,--- Momentum OG 1m HEIKEN ASHI
+,Bottom Middle,2,Momo 5mHA OG,RTH,5 min Heiken Ashi,MomentumSlopeStrategy v1.3,SimMomo2,NQ.5m.Momov1.2.RTHV1001
+,Bottom Right,1,ADX 5m Trinity OFF,RTH,5 min candle,ADX_DI_V3C,SimV3C-NQ-5A,NQ.ADX.DI.5m.V3C - 5A
+,Bottom Right,2,ADX 5m Trinity ON,RTH,5 min candle,ADX_DI_V3C,SimV3C-NQ-5B,NQ.ADX.DI.5m.V3C - 5B Trinitiy ON
+,,,,,,,,
+V3D,Top 1,,Expansion A,RTH,Uni 40-80-120,Expansion_V3D,SimV3D-NQ-1A,Expansion_V3D
+,Bottom 1,,Expansion B,RTH,Uni 60-120-180,Expansion_V3D_B,SimV3D-NQ-1B,Expansion_V3D_B
+,Top 2,,Momentum A,RTH,1 min candle,Momentum_V3D,SimV3D-NQ-2A,Momentum_V3D
+,Bottom 2,,Momentum B,RTH,3 min candle,Momentum_V3D_B,SimV3D-NQ-2B,Momentum_V3D_B
+,Top 3,,Fader A,RTH,1 min candle,Fader_V3D,SimV3D-NQ-3A,Fader_V3D A
+,Bottom 3,,Fader B,RTH,5 min candle,Fader_V3D_B,SimV3D-NQ-3B,Fader_V3D_B
+,Top 4,,Sniper Pullbacks A,RTH,3 min candle,Sniper_V3D,SimV3D-NQ-4A,Sniper_V3D 3m
+,Bottom 4,,Sniper Pullbacks B,RTH,3 min candle,Sniper_V3D_B,SimV3D-NQ-4B,Sniper_V3D_B
+,Top 5,,ADX DI A,ETH,3 min candle,ADX_DI_V3D,SimV3D-NQ-5A,ADX_DI_V3D
+,Bottom 5,,ADX DI B,ETH,Uni 30-60-90,ADX_DI_V3D,SimV3D-NQ-5B,ADX_DI_V3D Uni
+,Bottom 6,,ADX DI C,ETH,3 min candle,ADX_DI_V3D_C,SimV3D-NQ-5B,ADX_DI_V3D_C
