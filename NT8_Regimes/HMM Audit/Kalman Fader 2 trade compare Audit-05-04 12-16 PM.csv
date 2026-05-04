@@ -1,0 +1,8 @@
+Instrument,Action,Type,Quantity,Limit,Stop,State,Filled,Name,Strategy,Account display name,Account name,Time,
+NQ JUN26,Sell,Market,2,0,0,Filled,2,EnvelopeBreakExit,KalmanPulse Fader Mode A+,SimV1A - Kalman Fader 2,SimV1A - Kalman Fader 2,5/4/2026 10:35:01 AM,
+NQ JUN26,Sell,Limit,1,27896.75,0,Cancelled,0,Profit target,KalmanPulse Fader Mode A+,SimV1A - Kalman Fader 2,SimV1A - Kalman Fader 2,5/4/2026 10:35:01 AM,
+NQ JUN26,Sell,Stop Market,1,0,27887.50,Cancelled,0,Stop loss,KalmanPulse Fader Mode A+,SimV1A - Kalman Fader 2,SimV1A - Kalman Fader 2,5/4/2026 10:35:01 AM,
+NQ JUN26,Sell,Limit,1,27894.25,0,Cancelled,0,Profit target,KalmanPulse Fader Mode A+,SimV1A - Kalman Fader 2,SimV1A - Kalman Fader 2,5/4/2026 10:35:01 AM,
+NQ JUN26,Sell,Stop Market,1,0,27887.50,Cancelled,0,Stop loss,KalmanPulse Fader Mode A+,SimV1A - Kalman Fader 2,SimV1A - Kalman Fader 2,5/4/2026 10:35:01 AM,
+NQ JUN26,Buy,Market,1,0,0,Filled,1,KPF_Long2,KalmanPulse Fader Mode A+,SimV1A - Kalman Fader 2,SimV1A - Kalman Fader 2,5/4/2026 10:35:01 AM,
+NQ JUN26,Buy,Market,1,0,0,Filled,1,KPF_Long1,KalmanPulse Fader Mode A+,SimV1A - Kalman Fader 2,SimV1A - Kalman Fader 2,5/4/2026 10:35:01 AM,
