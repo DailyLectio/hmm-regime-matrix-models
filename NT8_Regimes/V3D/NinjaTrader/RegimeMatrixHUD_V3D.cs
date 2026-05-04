@@ -1,6 +1,8 @@
 // RegimeMatrixHUD_V3D.cs
 // V3D Institutional Regime Matrix — NT8 HUD Indicator
 //
+// VERSION: 1.1 — Pipeline Failsafe Added (2026-05-01)
+//
 // PURPOSE:
 //   Display device and safety interlock for the V3D regime classification
 //   system. Reads NQ_RegimeMatrix_Latest.csv or ES_RegimeMatrix_Latest.csv
@@ -13,6 +15,17 @@
 //   3. Modification timestamp guard — minimum 15 seconds between re-reads.
 //   4. No gate logic in C#. Only safety guard is && !StaleDataFlag.
 //   5. MES → ES file, MNQ → NQ file.
+//
+// V1.1 ADDITIONS — PIPELINE FAILSAFE:
+//   Monitors all upstream data feeds and displays health status in the HUD.
+//   Files monitored per instrument (NQ example):
+//     1. ValueArea_NQ.csv     — daily, must be within 2 trading days of today
+//     2. NQ_1min_export.txt   — live feed, must update < 3 min during RTH
+//     3. NQ_Macro_Regimes_V3D.csv  — Python Stage A, must update < 15 min during RTH
+//     4. NQ_HMM_Regimes_V3D.csv   — Python Stage B, must update < 15 min during RTH
+//   A new PIPELINE row on the HUD shows each feed's status at a glance.
+//   Optional: KillOnPipelineStale parameter forces bots OFF during RTH if any
+//   feed goes dark (default: WARNING only, bots stay enabled).
 //
 // SEPARATE FROM:
 //   RegimeMatrixHUD    (V3B — retired)
@@ -89,6 +102,23 @@ namespace NinjaTrader.NinjaScript.Indicators
         public int ADX_DISizePct    { get; private set; } = 0;
         public int SniperSizePct    { get; private set; } = 0;
 
+        // ----- V1.1: PIPELINE HEALTH — read by bots and monitoring systems -----
+        // PipelineAllGreen: true only when ALL four upstream feeds are current.
+        // Each individual property can be used for targeted diagnostics.
+        public bool PipelineAllGreen  { get; private set; } = false;
+        public bool ValueAreaFresh    { get; private set; } = false;  // ValueArea_XX.csv
+        public bool LiveFeedFresh     { get; private set; } = false;  // XX_1min_export.txt
+        public bool MacroFresh        { get; private set; } = false;  // XX_Macro_Regimes_V3D.csv
+        public bool HMMFresh          { get; private set; } = false;  // XX_HMM_Regimes_V3D.csv
+
+        // Phase One HUD visibility additions
+        public int    HMMStateAgeBars        { get; private set; } = 0;
+        public bool   AsymHysteresisGateOpen { get; private set; } = false;
+        public string AsymHysteresisReason   { get; private set; } = "UNKNOWN";
+        public bool   AsymHysteresisEnabled  { get; private set; } = false;
+        public bool   LabelAmbiguousFit      { get; private set; } = false;
+        public string LabelVwapSeparation    { get; private set; } = "";
+
         // ===================================================================
         // PARAMETERS
         // ===================================================================
@@ -98,29 +128,55 @@ namespace NinjaTrader.NinjaScript.Indicators
         public string DataFolderPath { get; set; }
             = @"C:\Users\Valued Customer\NT8_Regimes\V3D";
 
+        // V1.1: Pipeline failsafe parameters
+        [NinjaScriptProperty]
+        [Display(Name = "Kill Bots On Pipeline Stale",
+                 Description = "If true, forces all bots OFF during RTH when any upstream feed is stale. " +
+                               "Default false = show WARNING in HUD only. Set true for live trading.",
+                 GroupName = "Pipeline Monitor", Order = 1)]
+        public bool KillOnPipelineStale { get; set; } = false;
+
+        [NinjaScriptProperty]
+        [Display(Name = "ValueArea Stale Days",
+                 Description = "Alert when ValueArea CSV last-written date is older than this many trading days.",
+                 GroupName = "Pipeline Monitor", Order = 2)]
+        public int ValueAreaStaleDays { get; set; } = 2;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Live Feed Stale Minutes (RTH)",
+                 Description = "Alert when 1-min export file is older than this many minutes during RTH.",
+                 GroupName = "Pipeline Monitor", Order = 3)]
+        public int LiveFeedStaleMinutes { get; set; } = 3;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Python Stage Stale Minutes (RTH)",
+                 Description = "Alert when Macro or HMM CSV is older than this many minutes during RTH.",
+                 GroupName = "Pipeline Monitor", Order = 4)]
+        public int PythonStageStaleMinutes { get; set; } = 15;
+
         // ===================================================================
         // INTERNAL STATE
         // ===================================================================
 
-        // File tracking
-        private string   _matrixFile      = "";
-        private string   _leaderSymbol    = "";
-        private DateTime _lastFileCheck   = DateTime.MinValue;
+        // File tracking — RegimeMatrix_Latest
+        private string   _matrixFile       = "";
+        private string   _leaderSymbol     = "";
+        private DateTime _lastFileCheck    = DateTime.MinValue;
         private DateTime _lastFileWriteUtc = DateTime.MinValue;
-        private const int MinCheckSeconds = 15;
+        private const int MinCheckSeconds  = 15;
 
-        // Staleness guard
-        private const int MaxStateAgeMinutes = 20;
-        private DateTime _lastSuccessfulReadUtc = DateTime.MinValue;
+        // Staleness guard — RegimeMatrix_Latest
+        private const int MaxStateAgeMinutes       = 20;
+        private DateTime  _lastSuccessfulReadUtc   = DateTime.MinValue;
 
         // Safety state (separate from public StaleDataFlag — tracks parse failures)
-        private bool _parseFailed  = false;
-        private bool _fileMissing  = false;
+        private bool _parseFailed = false;
+        private bool _fileMissing = false;
 
         // Manual override state
-        private bool _isAutoMode         = true;
-        private bool _killAllActive      = false;
-        private int  _overrideBarsCount  = 0;
+        private bool _isAutoMode        = true;
+        private bool _killAllActive     = false;
+        private int  _overrideBarsCount = 0;
         private const int MaxOverrideBars = 30;
 
         // Per-bot manual override flags (only active in manual mode)
@@ -133,23 +189,43 @@ namespace NinjaTrader.NinjaScript.Indicators
         // Override log path
         private string _overrideLogPath = "";
 
+        // ----- V1.1: Pipeline health tracking -----
+        // Derived file paths — set once in DataLoaded, never change
+        private string _valueAreaFile   = "";   // Exports\ValueArea_{sym}.csv
+        private string _liveExportFile  = "";   // Exports\{sym}_1min_export.txt
+        private string _macroRegimeFile = "";   // V3D\{sym}_Macro_Regimes_V3D.csv
+        private string _hmmRegimeFile   = "";   // V3D\{sym}_HMM_Regimes_V3D.csv
+
+        // Internal freshness state mirrors the public properties
+        // (duplicated so ApplySafetyGuards can read them without a property call)
+        private bool _vaFreshInternal        = false;
+        private bool _liveFeedFreshInternal  = false;
+        private bool _macroFreshInternal     = false;
+        private bool _hmmFreshInternal       = false;
+
+        // Throttle — only re-check upstream feeds once per minute
+        private DateTime _lastPipelineCheck     = DateTime.MinValue;
+        private const int PipelineCheckSeconds  = 60;
+
         // ===================================================================
         // WPF UI ELEMENTS
         // ===================================================================
-        private Grid        _hudGrid;
-        private TextBlock   _tbHeader;
-        private TextBlock   _tbStatusBar;    // AUTO/MAN | FRESH/STALE
-        private TextBlock   _tbRegimeLine;   // REGIME + DIR + CONF + CONFLICT
-        private TextBlock   _tbLayerLine;    // MACRO | HMM | VEL | AGE
-        private TextBlock   _tbBotLine;      // bot permission summary
-        private TextBlock   _tbReasonLine;   // WHY + PHASE
-        private Button      _btnMode;
-        private Button      _btnExpansion;
-        private Button      _btnMomo;
-        private Button      _btnPine;
-        private Button      _btnADX_DI;
-        private Button      _btnSniper;
-        private Button      _btnKillAll;
+        private Grid      _hudGrid;
+        private TextBlock _tbHeader;
+        private TextBlock _tbStatusBar;    // AUTO/MAN | FRESH/STALE
+        private TextBlock _tbRegimeLine;   // REGIME + DIR + CONF + CONFLICT
+        private TextBlock _tbLayerLine;    // MACRO | HMM | VEL | AGE
+        private TextBlock _tbBotLine;      // bot permission summary
+        private TextBlock _tbReasonLine;   // WHY + PHASE
+        private TextBlock _tbPipelineLine; // V1.1 — upstream feed health summary
+        private TextBlock _tbGateLine;     // Phase One - hysteresis + HMM label quality
+        private Button    _btnMode;
+        private Button    _btnExpansion;
+        private Button    _btnMomo;
+        private Button    _btnPine;
+        private Button    _btnADX_DI;
+        private Button    _btnSniper;
+        private Button    _btnKillAll;
 
         // ===================================================================
         // LIFECYCLE
@@ -159,12 +235,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (State == State.SetDefaults)
             {
-                Description          = "V3D Regime Matrix HUD — display and safety interlock.";
-                Name                 = "Regime Matrix HUD V3D";
-                Calculate            = Calculate.OnBarClose;
-                IsOverlay            = true;
-                DisplayInDataBox     = false;
-                PaintPriceMarkers    = false;
+                Description              = "V3D Regime Matrix HUD — display and safety interlock.";
+                Name                     = "Regime Matrix HUD V3D";
+                Calculate                = Calculate.OnBarClose;
+                IsOverlay                = true;
+                DisplayInDataBox         = false;
+                PaintPriceMarkers        = false;
                 IsSuspendedWhileInactive = true;
             }
             else if (State == State.DataLoaded)
@@ -174,6 +250,23 @@ namespace NinjaTrader.NinjaScript.Indicators
                     _leaderSymbol + "_RegimeMatrix_Latest.csv");
                 _overrideLogPath = Path.Combine(DataFolderPath,
                     @"..\Overrides\HUD_Override_Log.csv");
+
+                // ----- V1.1: Derive all upstream pipeline file paths -----
+                // All paths are resolved relative to DataFolderPath so a single
+                // parameter change propagates everywhere.
+                string exportDir = Path.GetFullPath(Path.Combine(DataFolderPath, @"..\Exports"));
+                _valueAreaFile   = Path.Combine(exportDir, $"ValueArea_{_leaderSymbol}.csv");
+                _liveExportFile  = Path.Combine(exportDir, $"{_leaderSymbol}_1min_export.txt");
+                _macroRegimeFile = Path.Combine(DataFolderPath,
+                    $"{_leaderSymbol}_Macro_Regimes_V3D.csv");
+                _hmmRegimeFile   = Path.Combine(DataFolderPath,
+                    $"{_leaderSymbol}_HMM_Regimes_V3D.csv");
+
+                Print($"[V3D HUD {_leaderSymbol}] Pipeline monitor paths:");
+                Print($"  ValueArea  : {_valueAreaFile}");
+                Print($"  LiveExport : {_liveExportFile}");
+                Print($"  MacroCSV   : {_macroRegimeFile}");
+                Print($"  HMMCSV     : {_hmmRegimeFile}");
 
                 // Ensure override log directory exists
                 try
@@ -235,6 +328,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             // Safety: if we have a successful read but the write time is old, force stale
             CheckStaleness();
 
+            // V1.1: Check all upstream pipeline feeds (throttled to once per minute)
+            CheckUpstreamFeeds();
+
             // Apply safety layer — the only C# gate logic
             ApplySafetyGuards();
 
@@ -275,9 +371,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     return;  // nothing new
 
                 ReadLatestRow(_matrixFile);
-                _lastFileWriteUtc       = writeTime;
-                _lastSuccessfulReadUtc  = DateTime.UtcNow;
-                _parseFailed            = false;
+                _lastFileWriteUtc      = writeTime;
+                _lastSuccessfulReadUtc = DateTime.UtcNow;
+                _parseFailed           = false;
             }
             catch (Exception ex)
             {
@@ -326,37 +422,33 @@ namespace NinjaTrader.NinjaScript.Indicators
             int GetInt(string name, int def = 0)
                 => int.TryParse(Get(name), out int v) ? v : def;
 
-            int GetIntAny(params string[] names)
-            {
-                foreach (string name in names)
-                {
-                    string value = Get(name);
-                    if (!string.IsNullOrEmpty(value) && int.TryParse(value, out int v))
-                        return v;
-                }
-                return 0;
-            }
-
             double GetDbl(string name, double def = 0.0)
                 => double.TryParse(Get(name), System.Globalization.NumberStyles.Any,
                                    System.Globalization.CultureInfo.InvariantCulture,
                                    out double v) ? v : def;
 
             bool GetBool(string name)
-                => Get(name) == "1";
+            {
+                string v = Get(name).Trim().ToLowerInvariant();
+                return v == "1" || v == "true" || v == "yes" || v == "y" || v == "on";
+            }
 
             // --- Core regime state ---
-            FinalRegime          = Get("FinalRegime");
-            FinalDirection       = Get("FinalDirection");
-            RegimeConfidence     = GetInt("RegimeConfidence");
-            ConflictScore        = GetDbl("ConflictScore");
-            Phase                = Get("Phase");
-            Velocity3P           = GetDbl("Velocity3P_ATR");
-            StateAgeBars         = GetInt("StateAgeBars");
-            ReasonCode           = Get("ReasonCode");
+            FinalRegime      = Get("FinalRegime");
+            FinalDirection   = Get("FinalDirection");
+            RegimeConfidence = GetInt("RegimeConfidence");
+            ConflictScore    = GetDbl("ConflictScore");
+            Phase            = Get("Phase");
+            Velocity3P       = GetDbl("Velocity3P_ATR");
+            StateAgeBars     = GetInt("StateAgeBars");
+            ReasonCode       = Get("ReasonCode");
+            HMMStateAgeBars  = GetInt("HMMStateAgeBars", 0);
+            AsymHysteresisGateOpen = GetBool("AsymHysteresisGateOpen");
+            AsymHysteresisReason   = Get("AsymHysteresisReason");
+            AsymHysteresisEnabled  = GetBool("AsymHysteresisEnabled");
 
             // Stale data flag from Python (also evaluated locally below)
-            bool pythonStaleFlag  = GetBool("StaleDataFlag");
+            bool pythonStaleFlag = GetBool("StaleDataFlag");
 
             // --- Source layers ---
             MacroRegime          = Get("MacroRegime");
@@ -379,11 +471,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             AllowFadeShort = GetBool("AllowFadeShort");
 
             // --- Sizing scalars ---
-            ExpansionSizePct = GetIntAny("ExpansionSizePct", "AllowExpansion_SizePct");
-            MomoSizePct      = GetIntAny("MomoSizePct", "AllowMomo_SizePct");
-            PineSizePct      = GetIntAny("PineSizePct", "AllowPine_SizePct");
-            ADX_DISizePct    = GetIntAny("ADX_DISizePct", "AllowADX_DI_SizePct");
-            SniperSizePct    = GetIntAny("SniperSizePct", "AllowSniper_SizePct");
+            ExpansionSizePct = GetInt("AllowExpansion_SizePct");
+            MomoSizePct      = GetInt("AllowMomo_SizePct");
+            PineSizePct      = GetInt("AllowPine_SizePct");
+            ADX_DISizePct    = GetInt("AllowADX_DI_SizePct");
+            SniperSizePct    = GetInt("AllowSniper_SizePct");
 
             // Combine Python stale flag with local assessment
             StaleDataFlag = pythonStaleFlag;
@@ -392,6 +484,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 _parseFailed = true;
             else
                 _parseFailed = false;
+
+            ReadHmmLabelQuality();
         }
 
         // ===================================================================
@@ -411,19 +505,272 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         // ===================================================================
+        // V1.1 — UPSTREAM PIPELINE HEALTH CHECK
+        //
+        // Runs every PipelineCheckSeconds (60 s). Checks four upstream feeds:
+        //   1. ValueArea CSV    — last-written date must be within ValueAreaStaleDays
+        //   2. 1-min export     — file modification time < LiveFeedStaleMinutes during RTH
+        //   3. Macro regimes    — file modification time < PythonStageStaleMinutes during RTH
+        //   4. HMM regimes      — file modification time < PythonStageStaleMinutes during RTH
+        //
+        // Outside RTH: existence check only (files legitimately don't change).
+        // All four flags are exposed as public properties so bots can read them.
+        // PipelineAllGreen is true only when all four pass.
+        // ===================================================================
+
+        private void CheckUpstreamFeeds()
+        {
+            if ((DateTime.Now - _lastPipelineCheck).TotalSeconds < PipelineCheckSeconds)
+                return;
+
+            _lastPipelineCheck = DateTime.Now;
+
+            bool isRTH = IsRTHNow();
+
+            // --- 1. ValueArea CSV (daily, instrument-specific) ---
+            _vaFreshInternal = CheckValueAreaFreshness(_valueAreaFile, ValueAreaStaleDays);
+            ValueAreaFresh   = _vaFreshInternal;
+
+            // --- 2. 1-minute live export (realtime feed) ---
+            if (!File.Exists(_liveExportFile))
+            {
+                _liveFeedFreshInternal = false;
+            }
+            else if (isRTH)
+            {
+                double liveAgeMin = (DateTime.Now - File.GetLastWriteTime(_liveExportFile))
+                                    .TotalMinutes;
+                _liveFeedFreshInternal = liveAgeMin < LiveFeedStaleMinutes;
+            }
+            else
+            {
+                _liveFeedFreshInternal = true; // file exists, outside RTH → OK
+            }
+            LiveFeedFresh = _liveFeedFreshInternal;
+
+            // --- 3. Stage A Macro Regimes CSV ---
+            if (!File.Exists(_macroRegimeFile))
+            {
+                _macroFreshInternal = false;
+            }
+            else if (isRTH)
+            {
+                double macroAgeMin = (DateTime.Now - File.GetLastWriteTime(_macroRegimeFile))
+                                     .TotalMinutes;
+                _macroFreshInternal = macroAgeMin < PythonStageStaleMinutes;
+            }
+            else
+            {
+                _macroFreshInternal = true;
+            }
+            MacroFresh = _macroFreshInternal;
+
+            // --- 4. Stage B HMM Regimes CSV ---
+            if (!File.Exists(_hmmRegimeFile))
+            {
+                _hmmFreshInternal = false;
+            }
+            else if (isRTH)
+            {
+                double hmmAgeMin = (DateTime.Now - File.GetLastWriteTime(_hmmRegimeFile))
+                                   .TotalMinutes;
+                _hmmFreshInternal = hmmAgeMin < PythonStageStaleMinutes;
+            }
+            else
+            {
+                _hmmFreshInternal = true;
+            }
+            HMMFresh = _hmmFreshInternal;
+
+            // --- Aggregate ---
+            PipelineAllGreen = _vaFreshInternal && _liveFeedFreshInternal &&
+                               _macroFreshInternal && _hmmFreshInternal;
+
+            // Log any state change to the override log so there is a timestamped trail
+            if (!PipelineAllGreen)
+            {
+                string detail = BuildPipelineDetail();
+                LogOverrideEvent("PIPELINE", false, detail);
+            }
+        }
+
+        private void ReadHmmLabelQuality()
+        {
+            LabelAmbiguousFit = false;
+            LabelVwapSeparation = "";
+
+            if (string.IsNullOrEmpty(_hmmRegimeFile) || !File.Exists(_hmmRegimeFile))
+                return;
+
+            try
+            {
+                Dictionary<string, string> row = ReadLastCsvRowMap(_hmmRegimeFile);
+                LabelAmbiguousFit = ParseFlexibleBool(GetMap(row, "LabelAmbiguousFit"));
+                LabelVwapSeparation = GetMap(row, "LabelVwapSeparation");
+            }
+            catch
+            {
+                LabelAmbiguousFit = false;
+                LabelVwapSeparation = "READ_ERR";
+            }
+        }
+
+        private Dictionary<string, string> ReadLastCsvRowMap(string filePath)
+        {
+            var rows = new List<string>();
+
+            using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (StreamReader sr = new StreamReader(fs))
+            {
+                string line;
+                while ((line = sr.ReadLine()) != null)
+                    if (!string.IsNullOrWhiteSpace(line))
+                        rows.Add(line);
+            }
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (rows.Count < 2)
+                return map;
+
+            string[] headers = rows[0].Split(',');
+            string[] values = rows[rows.Count - 1].Split(',');
+
+            for (int i = 0; i < headers.Length && i < values.Length; i++)
+                map[headers[i].Trim()] = values[i].Trim();
+
+            return map;
+        }
+
+        private string GetMap(Dictionary<string, string> map, string key)
+        {
+            string value;
+            if (map != null && map.TryGetValue(key, out value))
+                return value;
+            return "";
+        }
+
+        private bool ParseFlexibleBool(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            string v = value.Trim().ToLowerInvariant();
+            return v == "1" || v == "true" || v == "yes" || v == "y" || v == "on";
+        }
+
+        // -------------------------------------------------------------------
+        // ValueArea freshness: parse the last date row in the CSV and confirm
+        // it is within `maxStaleDays` trading days of today.
+        // -------------------------------------------------------------------
+        private bool CheckValueAreaFreshness(string filePath, int maxStaleDays)
+        {
+            if (!File.Exists(filePath)) return false;
+            try
+            {
+                string lastDataLine = null;
+                using (var fs = new FileStream(filePath, FileMode.Open,
+                                               FileAccess.Read, FileShare.ReadWrite))
+                using (var sr = new StreamReader(fs))
+                {
+                    string line;
+                    while ((line = sr.ReadLine()) != null)
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        // Skip header row (starts with "Date" or "date")
+                        if (line.TrimStart().StartsWith("Date", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        lastDataLine = line;
+                    }
+                }
+
+                if (lastDataLine == null) return false;
+
+                // ValueArea CSV: Date,Symbol,POC,VAH,VAL,DailyVolume,ONHigh,ONLow
+                string dateStr = lastDataLine.Split(',')[0].Trim();
+                if (!DateTime.TryParse(dateStr, out DateTime lastDate))
+                    return false;
+
+                int daysLate = TradingDaysAgo(lastDate.Date, DateTime.Today);
+                return daysLate <= maxStaleDays;
+            }
+            catch (Exception ex)
+            {
+                Print($"[V3D HUD {_leaderSymbol}] ValueArea freshness check error: {ex.Message}");
+                return false;
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // Count trading days (Mon–Fri, no holiday table) from `from` to `to`.
+        // Returns 0 if from >= to.
+        // -------------------------------------------------------------------
+        private int TradingDaysAgo(DateTime from, DateTime to)
+        {
+            if (from >= to) return 0;
+            int count = 0;
+            DateTime cursor = from.AddDays(1);
+            while (cursor <= to)
+            {
+                if (cursor.DayOfWeek != DayOfWeek.Saturday &&
+                    cursor.DayOfWeek != DayOfWeek.Sunday)
+                    count++;
+                cursor = cursor.AddDays(1);
+            }
+            return count;
+        }
+
+        // -------------------------------------------------------------------
+        // Returns true if the current wall-clock time is within RTH
+        // (09:30–16:05 ET Mon–Fri). Uses local system time; assumes machine
+        // is running in ET. Adjust if the machine timezone differs.
+        // -------------------------------------------------------------------
+        private bool IsRTHNow()
+        {
+            DateTime now = DateTime.Now;
+            if (now.DayOfWeek == DayOfWeek.Saturday || now.DayOfWeek == DayOfWeek.Sunday)
+                return false;
+            TimeSpan t = now.TimeOfDay;
+            return t >= new TimeSpan(9, 30, 0) && t <= new TimeSpan(16, 5, 0);
+        }
+
+        // -------------------------------------------------------------------
+        // Build a compact pipeline detail string for logging
+        // -------------------------------------------------------------------
+        private string BuildPipelineDetail()
+        {
+            return $"VA:{(_vaFreshInternal ? "OK" : "STALE")} " +
+                   $"1M:{(_liveFeedFreshInternal  ? "OK" : "STALE")} " +
+                   $"MACRO:{(_macroFreshInternal  ? "OK" : "STALE")} " +
+                   $"HMM:{(_hmmFreshInternal      ? "OK" : "STALE")}";
+        }
+
+        // ===================================================================
         // SAFETY GUARDS — the only C# gate logic
         // ===================================================================
 
         private void ApplySafetyGuards()
         {
+            // --- Tier 1: RegimeMatrix integrity (always hard-stops bots) ---
             if (StaleDataFlag || _parseFailed || _fileMissing || _killAllActive)
             {
-                string reason = _killAllActive   ? "KILL_ALL_ACTIVE" :
-                                _fileMissing     ? "FILE_MISSING"    :
-                                _parseFailed     ? "PARSE_FAILED"    :
-                                                   "STALE_DATA";
+                string reason = _killAllActive ? "KILL_ALL_ACTIVE" :
+                                _fileMissing   ? "FILE_MISSING"    :
+                                _parseFailed   ? "PARSE_FAILED"    :
+                                                  "STALE_DATA";
                 ForceAllOff(reason);
+                return;
             }
+
+            // --- Tier 2: Pipeline health (optional hard-stop, always visible) ---
+            // KillOnPipelineStale is an operator-configured parameter.
+            // Default = false → WARNING displayed, bots stay enabled.
+            // Set to true for live trading to hard-stop bots on any feed failure.
+            if (KillOnPipelineStale && !PipelineAllGreen && IsRTHNow())
+            {
+                ForceAllOff("PIPELINE_STALE");
+            }
+            // Note: even when KillOnPipelineStale=false, the HUD pipeline row
+            // turns RED/YELLOW so the operator can see the issue immediately.
         }
 
         private void ForceAllOff(string reason)
@@ -494,6 +841,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         // ===================================================================
         // WPF CONTROL CONSTRUCTION
+        // V1.1: Added Row 6 - Pipeline health row.
+        // Phase One: Added Row 7 - hysteresis + HMM label quality row.
         // ===================================================================
 
         private void CreateWPFControls()
@@ -506,11 +855,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 VerticalAlignment   = VerticalAlignment.Top,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Margin              = new Thickness(10, 10, 0, 0),
-                MinWidth            = 400,
+                MinWidth            = 440, // slightly wider to fit pipeline row
             };
 
-            // Row definitions
-            for (int i = 0; i < 8; i++)
+            // Row definitions - 10 rows (0-9).
+            for (int i = 0; i < 10; i++)
                 _hudGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             // Row 0 — Header bar
@@ -550,7 +899,25 @@ namespace NinjaTrader.NinjaScript.Indicators
                 new Thickness(6, 1, 6, 4), TextAlignment.Left);
             SetRow(_tbReasonLine, 5);
 
-            // Row 6 — Mode + Override buttons (StackPanel)
+            // Row 6 — V1.1 Pipeline health line
+            // Shows live status of all four upstream feeds. Background color:
+            //   GREEN  = all feeds current
+            //   YELLOW = ValueArea or Python stage stale (warning, bots may still run)
+            //   RED    = 1-min live feed stale during RTH (critical data loss)
+            _tbPipelineLine = MakeTextBlock(
+                "PIPELINE: [VA:--]  [1M:--]  [MACRO:--]  [HMM:--]",
+                Brushes.White, 10, FontWeights.Bold, Brushes.DimGray,
+                new Thickness(6, 2, 6, 2), TextAlignment.Left);
+            SetRow(_tbPipelineLine, 6);
+
+            // Row 7 - Phase One gate + HMM label quality line
+            _tbGateLine = MakeTextBlock(
+                "GATE: --  |  HMM AGE: --  |  HMM DRIFT: --",
+                Brushes.White, 10, FontWeights.Bold, Brushes.DimGray,
+                new Thickness(6, 2, 6, 2), TextAlignment.Left);
+            SetRow(_tbGateLine, 7);
+
+            // Row 8 - Mode + Override buttons (StackPanel)
             var buttonPanel = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -573,7 +940,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             buttonPanel.Children.Add(_btnSniper);
             buttonPanel.Children.Add(_btnKillAll);
 
-            Grid.SetRow(buttonPanel, 6);
+            Grid.SetRow(buttonPanel, 8);
             _hudGrid.Children.Add(buttonPanel);
 
             UserControlCollection.Add(_hudGrid);
@@ -609,12 +976,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             var btn = new Button
             {
-                Content   = label,
+                Content    = label,
                 Background = bg,
                 Foreground = Brushes.White,
-                Margin    = new Thickness(3, 0, 3, 0),
-                Padding   = new Thickness(5, 3, 5, 3),
-                FontSize  = 9,
+                Margin     = new Thickness(3, 0, 3, 0),
+                Padding    = new Thickness(5, 3, 5, 3),
+                FontSize   = 9,
             };
             btn.Click += handler;
             return btn;
@@ -631,6 +998,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         // ===================================================================
         // HUD DISPLAY UPDATE — called on UI thread via Dispatcher
+        // V1.1: Added pipeline row population
         // ===================================================================
 
         private void UpdateHUDDisplay()
@@ -644,10 +1012,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             bool   isFresh    = freshLabel == "FRESH";
 
             _tbStatusBar.Text       = $"{modeLabel}  |  {freshLabel}";
-            _tbStatusBar.Background = _killAllActive         ? Brushes.DarkRed  :
-                                      !isFresh               ? Brushes.OrangeRed :
-                                      !_isAutoMode           ? Brushes.Goldenrod :
-                                                               Brushes.DarkGreen;
+            _tbStatusBar.Background = _killAllActive ? Brushes.DarkRed   :
+                                      !isFresh       ? Brushes.OrangeRed :
+                                      !_isAutoMode   ? Brushes.Goldenrod :
+                                                       Brushes.DarkGreen;
             _tbStatusBar.Foreground = Brushes.White;
 
             // --- Regime line ---
@@ -658,7 +1026,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                                        FinalRegime == "TREND_COMPRESSION" ? Brushes.Cyan       :
                                        FinalRegime == "ROTATION_LIQUID"   ? Brushes.Yellow     :
                                        FinalRegime == "TRANSITION"        ? Brushes.OrangeRed  :
-                                                                            Brushes.LightGray;
+                                                                             Brushes.LightGray;
 
             // --- Layer line ---
             _tbLayerLine.Text = $"MACRO: {MacroPlaybook}  |  HMM: {HMMRegime}" +
@@ -677,6 +1045,67 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             // --- Reason / Phase line ---
             _tbReasonLine.Text = $"WHY: {ReasonCode}  |  PHASE: {Phase}";
+
+            // ----------------------------------------------------------------
+            // V1.1 — Pipeline health row
+            // Format: PIPELINE: [VA:OK]  [1M:OK]  [MACRO:OK]  [HMM:OK]
+            // Background colors:
+            //   DarkGreen  = all four feeds current
+            //   DarkRed    = live feed (1-min export) stale during RTH → critical
+            //   Goldenrod  = other feed(s) stale → warning
+            // ----------------------------------------------------------------
+            string FmtFeed(string label, bool fresh) => fresh ? $"[{label}:OK]" : $"[{label}:STALE!]";
+
+            _tbPipelineLine.Text =
+                "PIPELINE: " +
+                FmtFeed("VA",    ValueAreaFresh)  + "  " +
+                FmtFeed("1M",    LiveFeedFresh)   + "  " +
+                FmtFeed("MACRO", MacroFresh)      + "  " +
+                FmtFeed("HMM",   HMMFresh);
+
+            bool liveStaleDuringRTH = !LiveFeedFresh && IsRTHNow();
+
+            _tbPipelineLine.Background = PipelineAllGreen       ? Brushes.DarkGreen  :
+                                         liveStaleDuringRTH     ? Brushes.DarkRed    :
+                                                                   Brushes.DarkGoldenrod;
+            _tbPipelineLine.Foreground = Brushes.White;
+
+            // ----------------------------------------------------------------
+            // Phase One - Asymmetric hysteresis + HMM label quality row
+            // ----------------------------------------------------------------
+            string gateLabel;
+            Brush gateBg;
+
+            if (!AsymHysteresisEnabled)
+            {
+                gateLabel = "DISABLED";
+                gateBg = Brushes.DimGray;
+            }
+            else if (AsymHysteresisGateOpen)
+            {
+                gateLabel = "OPEN";
+                gateBg = Brushes.DarkGreen;
+            }
+            else
+            {
+                gateLabel = "BLOCKED";
+                gateBg = Brushes.DarkRed;
+            }
+
+            string ageWarn = HMMStateAgeBars > 0 && HMMStateAgeBars < 2 ? " (YOUNG)" : "";
+            string driftLabel = LabelAmbiguousFit ? "WARN" : "OK";
+
+            _tbGateLine.Text =
+                $"GATE: {gateLabel} | HMM AGE: {HMMStateAgeBars} bars{ageWarn} | HMM DRIFT: {driftLabel} | {AsymHysteresisReason}";
+            _tbGateLine.Background = LabelAmbiguousFit ? Brushes.DarkGoldenrod : gateBg;
+            _tbGateLine.Foreground = Brushes.White;
+
+            // If pipeline kill is active AND any feed is stale, also reflect in status bar
+            if (KillOnPipelineStale && !PipelineAllGreen && IsRTHNow())
+            {
+                _tbStatusBar.Text       = $"{modeLabel}  |  PIPELINE STALE — BOTS OFF";
+                _tbStatusBar.Background = Brushes.DarkRed;
+            }
 
             // --- Kill-all button style ---
             _btnKillAll.Background = _killAllActive ? Brushes.Red : Brushes.DarkRed;
@@ -699,7 +1128,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 // Returning to auto: reset all manual override state
                 ResetManualOverrides();
-                _killAllActive    = false;
+                _killAllActive     = false;
                 _overrideBarsCount = 0;
                 LogOverrideEvent("ALL", false, "AUTO_MODE_RESTORED");
             }
@@ -785,61 +1214,55 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
-    {
-        private RegimeMatrixHUD_V3D[] cacheRegimeMatrixHUD_V3D;
+	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+	{
+		private RegimeMatrixHUD_V3D[] cacheRegimeMatrixHUD_V3D;
+		public RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(string dataFolderPath, bool killOnPipelineStale, int valueAreaStaleDays, int liveFeedStaleMinutes, int pythonStageStaleMinutes)
+		{
+			return RegimeMatrixHUD_V3D(Input, dataFolderPath, killOnPipelineStale, valueAreaStaleDays, liveFeedStaleMinutes, pythonStageStaleMinutes);
+		}
 
-        public RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(string dataFolderPath)
-        {
-            return RegimeMatrixHUD_V3D(Input, dataFolderPath);
-        }
-
-        public RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(ISeries<double> input, string dataFolderPath)
-        {
-            if (cacheRegimeMatrixHUD_V3D != null)
-                for (int idx = 0; idx < cacheRegimeMatrixHUD_V3D.Length; idx++)
-                    if (cacheRegimeMatrixHUD_V3D[idx] != null
-                        && cacheRegimeMatrixHUD_V3D[idx].DataFolderPath == dataFolderPath
-                        && cacheRegimeMatrixHUD_V3D[idx].EqualsInput(input))
-                        return cacheRegimeMatrixHUD_V3D[idx];
-
-            return CacheIndicator<RegimeMatrixHUD_V3D>(
-                new RegimeMatrixHUD_V3D { DataFolderPath = dataFolderPath },
-                input, ref cacheRegimeMatrixHUD_V3D);
-        }
-    }
+		public RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(ISeries<double> input, string dataFolderPath, bool killOnPipelineStale, int valueAreaStaleDays, int liveFeedStaleMinutes, int pythonStageStaleMinutes)
+		{
+			if (cacheRegimeMatrixHUD_V3D != null)
+				for (int idx = 0; idx < cacheRegimeMatrixHUD_V3D.Length; idx++)
+					if (cacheRegimeMatrixHUD_V3D[idx] != null && cacheRegimeMatrixHUD_V3D[idx].DataFolderPath == dataFolderPath && cacheRegimeMatrixHUD_V3D[idx].KillOnPipelineStale == killOnPipelineStale && cacheRegimeMatrixHUD_V3D[idx].ValueAreaStaleDays == valueAreaStaleDays && cacheRegimeMatrixHUD_V3D[idx].LiveFeedStaleMinutes == liveFeedStaleMinutes && cacheRegimeMatrixHUD_V3D[idx].PythonStageStaleMinutes == pythonStageStaleMinutes && cacheRegimeMatrixHUD_V3D[idx].EqualsInput(input))
+						return cacheRegimeMatrixHUD_V3D[idx];
+			return CacheIndicator<RegimeMatrixHUD_V3D>(new RegimeMatrixHUD_V3D(){ DataFolderPath = dataFolderPath, KillOnPipelineStale = killOnPipelineStale, ValueAreaStaleDays = valueAreaStaleDays, LiveFeedStaleMinutes = liveFeedStaleMinutes, PythonStageStaleMinutes = pythonStageStaleMinutes }, input, ref cacheRegimeMatrixHUD_V3D);
+		}
+	}
 }
 
 namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
 {
-    public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
-    {
-        public Indicators.RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(string dataFolderPath)
-        {
-            return indicator.RegimeMatrixHUD_V3D(Input, dataFolderPath);
-        }
+	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
+	{
+		public Indicators.RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(string dataFolderPath, bool killOnPipelineStale, int valueAreaStaleDays, int liveFeedStaleMinutes, int pythonStageStaleMinutes)
+		{
+			return indicator.RegimeMatrixHUD_V3D(Input, dataFolderPath, killOnPipelineStale, valueAreaStaleDays, liveFeedStaleMinutes, pythonStageStaleMinutes);
+		}
 
-        public Indicators.RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(ISeries<double> input, string dataFolderPath)
-        {
-            return indicator.RegimeMatrixHUD_V3D(input, dataFolderPath);
-        }
-    }
+		public Indicators.RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(ISeries<double> input , string dataFolderPath, bool killOnPipelineStale, int valueAreaStaleDays, int liveFeedStaleMinutes, int pythonStageStaleMinutes)
+		{
+			return indicator.RegimeMatrixHUD_V3D(input, dataFolderPath, killOnPipelineStale, valueAreaStaleDays, liveFeedStaleMinutes, pythonStageStaleMinutes);
+		}
+	}
 }
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
-    {
-        public Indicators.RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(string dataFolderPath)
-        {
-            return indicator.RegimeMatrixHUD_V3D(Input, dataFolderPath);
-        }
+	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+	{
+		public Indicators.RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(string dataFolderPath, bool killOnPipelineStale, int valueAreaStaleDays, int liveFeedStaleMinutes, int pythonStageStaleMinutes)
+		{
+			return indicator.RegimeMatrixHUD_V3D(Input, dataFolderPath, killOnPipelineStale, valueAreaStaleDays, liveFeedStaleMinutes, pythonStageStaleMinutes);
+		}
 
-        public Indicators.RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(ISeries<double> input, string dataFolderPath)
-        {
-            return indicator.RegimeMatrixHUD_V3D(input, dataFolderPath);
-        }
-    }
+		public Indicators.RegimeMatrixHUD_V3D RegimeMatrixHUD_V3D(ISeries<double> input , string dataFolderPath, bool killOnPipelineStale, int valueAreaStaleDays, int liveFeedStaleMinutes, int pythonStageStaleMinutes)
+		{
+			return indicator.RegimeMatrixHUD_V3D(input, dataFolderPath, killOnPipelineStale, valueAreaStaleDays, liveFeedStaleMinutes, pythonStageStaleMinutes);
+		}
+	}
 }
 
 #endregion
