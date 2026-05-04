@@ -1,0 +1,18 @@
+Type,Where to load/run,Component,How many,Feeds/required for,Confirm this output/check,Operator note
+Support - load once,NQ 1m support chart,LiveDataExporter,1,All V3C/V3D NQ macro/HMM inputs,Exports\NQ_1min_export.txt updates,Do not add to every strategy chart
+Support - load once,ES 1m support chart,LiveDataExporter,1,ES macro/HMM inputs and audit coverage,Exports\ES_1min_export.txt updates,Only needed if ES feed/audit is in scope
+Support - load once,NQ value-area support chart,ValueAreaExporter,1,NQ VAH/VAL/POC inputs,Exports\ValueArea_NQ.csv updates,Independent support chart
+Support - load once,ES value-area support chart,ValueAreaExporter,1,ES VAH/VAL/POC inputs,Exports\ValueArea_ES.csv updates,Independent support chart
+Support - load once,NQ/MNQ volumetric footprint support chart,OrderFlowSetupScanner,1,V1B Mode B footprint signals and footprint audit,Active\Footprint_Export.csv gets NQ/MNQ rows,Independent footprint chart
+Support - load once,ES/MES volumetric footprint support chart,OrderFlowSetupScanner,1,ES footprint audit/feed coverage,Active\Footprint_Export.csv gets ES/MES rows,Only needed if ES footprint coverage is in scope
+Support - load once,NQ 1m leader chart or any stable NQ chart,RegimeMatrixHUD_V3C,1,All NQ V3C tabs,HUD fresh; V3C\NQ_Regimes_V3C_Latest.csv updates,One V3C HUD per leader symbol is enough
+Support - optional once,ES leader chart,RegimeMatrixHUD_V3C,0 or 1,ES V3C tabs only,HUD fresh; V3C\ES_Regimes_V3C_Latest.csv updates,Skip if no ES V3C testing
+Support - load once,NQ 1m leader chart or any stable NQ chart,RegimeMatrixHUD_V3D,1,All NQ V3D tabs,HUD fresh; V3D\NQ_RegimeMatrix_Latest.csv updates,One V3D HUD per leader symbol is enough
+Support - optional once,ES leader chart,RegimeMatrixHUD_V3D,0 or 1,ES V3D tabs only,HUD fresh; V3D\ES_RegimeMatrix_Latest.csv updates,Skip if no ES V3D testing
+Library - compile once,NinjaTrader indicator library,HUDMessenger; HUDMessengerV1B,1 compile,V1A/V1B shared bias/context,Available in indicator list,Not a per-chart exporter
+On demand,Any support chart when repair is needed,ValueAreaBackfillReporter,As needed,VAH/VAL/POC repair,Backfill confirms missing/stale value-area data,Use only for repair
+Process - V3C,Windows process launched by Master_Keys\V3C_START.bat,V3C ModelFeed Watchdog; V3C Regime Matrix Supervisor,1 each,All V3C tabs,V3C latest files fresh,Keep windows open
+Process - V3D,Windows process launched by Master_Keys\V3D_START.bat,V3D Stage A; V3D Stage B; V3D Stage C,1 each,All V3D tabs,V3D matrix/macro/HMM files fresh,Keep windows open
+Per strategy tab,All V1A/V1B registry rows,Strategy + template + exact Sim account + V1 logging,9 tabs,V1A/V1B account tests,Trade rows stamped V1A/V1B as intended,Support exporters are not repeated per tab
+Per strategy tab,All V3C registry rows,Strategy + template + exact SimV3C account + V3C logging,13 tabs,V3C account tests,Trade rows stamped V3C/Anchored_HMM_V3C,Do not use V3D logger/template
+Per strategy tab,All V3D registry rows,Strategy + template + exact SimV3D account + V3D logging,11 tabs,V3D account tests,Trade rows stamped V3D; no directional fire on HMM=Transition,Support HUD is not repeated per tab

@@ -20,6 +20,7 @@ All-model performance export:
 
 - Daily EOD export: `C:\Users\Valued Customer\NT8_Regimes\Master_Keys\ALL_MODELS_EXPORT.bat`
 - Weekly EOW export: `C:\Users\Valued Customer\NT8_Regimes\Master_Keys\ALL_MODELS_EOW_EXPORT.bat`
+- Account/loadout registry: `C:\Users\Valued Customer\NT8_Regimes\Registry\Master Accounts Registry 05-03-2026 - Operational Loadout.csv`
 
 The longer master files are called automatically by those one-click files:
 
@@ -28,15 +29,57 @@ The longer master files are called automatically by those one-click files:
 - `V3D_START.bat` calls `V3D_PreMarket_Master.bat`
 - `V3D_EOD.bat` calls `V3D_EndOfDay_Shutdown.bat`
 
+## Master Must-Be-Running Loadout
+
+Use the simplified visual loadout first:
+
+- `C:\Users\Valued Customer\NT8_Regimes\Master_Keys\Operator_Operational_Loadout_Simple.md`
+
+The main rule: support indicators/exporters are loaded once on independent support charts. They do not need to be added to every strategy tab.
+
+### Load once only
+
+- [ ] One NQ 1-minute chart has `LiveDataExporter` loaded.
+- [ ] One ES 1-minute chart has `LiveDataExporter` loaded.
+- [ ] One NQ value-area chart has `ValueAreaExporter` loaded.
+- [ ] One ES value-area chart has `ValueAreaExporter` loaded.
+- [ ] One NQ/MNQ volumetric footprint chart has `OrderFlowSetupScanner` loaded.
+- [ ] One ES/MES volumetric footprint chart has `OrderFlowSetupScanner` loaded.
+- [ ] One NQ leader chart has `RegimeMatrixHUD_V3C` loaded if V3C is active.
+- [ ] One NQ leader chart has `RegimeMatrixHUD_V3D` loaded if V3D is active.
+- [ ] ES leader HUDs are loaded only if ES V3C/V3D strategy testing is active.
+- [ ] `HUDMessenger` and `HUDMessengerV1B` are compiled and available.
+
+### Per strategy tab
+
+- [ ] Strategy name matches the account registry.
+- [ ] Template name matches the account registry.
+- [ ] Sim account matches the account registry exactly.
+- [ ] Time/session settings match the account registry.
+- [ ] Trade logging/model stamping is correct for that model.
+
+### Process checks
+
+- [ ] `C:\Users\Valued Customer\NT8_Regimes\Master_Keys\V3C_START.bat` has been run if V3C is active.
+- [ ] V3C ModelFeed Watchdog and V3C Regime Matrix Supervisor are open.
+- [ ] `C:\Users\Valued Customer\NT8_Regimes\Master_Keys\V3D_START.bat` has been run.
+- [ ] V3D Stage A MacroRegime, Stage B HMMWatchdog, and Stage C Supervisor are open.
+- [ ] V3D Stage C is blocking directional lanes when HMM is `Transition`; this should show as WAIT/BLOCKED unless another permitted final regime is present.
+
+### Operator registry check
+
+Use `C:\Users\Valued Customer\NT8_Regimes\Registry\Master Accounts Registry 05-03-2026 - Simple Loadout.csv` for the condensed support-vs-tab view. Use `C:\Users\Valued Customer\NT8_Regimes\Registry\Master Accounts Registry 05-03-2026 - Operational Loadout.csv` only if you need the full detailed row-by-row version.
+
 ## Morning Startup - 9:15 AM ET
 
 - [ ] Confirm NinjaTrader is running and live export is active.
-- [ ] Double-click `C:\Users\Valued Customer\NT8_Regimes\V3C\Keys\V3C_START.bat`.
+- [ ] Confirm every item in the Master Must-Be-Running Loadout section is loaded or intentionally marked not in scope for today's test.
+- [ ] Double-click `C:\Users\Valued Customer\NT8_Regimes\Master_Keys\V3C_START.bat`.
 - [ ] Wait for the V3C startup window to finish its 60-second check.
 - [ ] Confirm the V3C windows are open:
   - [ ] V3C ModelFeed Watchdog
   - [ ] V3C Regime Matrix Supervisor
-- [ ] Double-click `C:\Users\Valued Customer\NT8_Regimes\V3D\Keys\V3D_START.bat`.
+- [ ] Double-click `C:\Users\Valued Customer\NT8_Regimes\Master_Keys\V3D_START.bat`.
 - [ ] Wait for the V3D startup window to finish its 60-second check.
 - [ ] Confirm the V3D windows are open:
   - [ ] V3D Stage A MacroRegime
@@ -71,6 +114,11 @@ The longer master files are called automatically by those one-click files:
 - [ ] Confirm the V3C report was created in `V3C\Reports`.
 - [ ] Double-click `C:\Users\Valued Customer\NT8_Regimes\Master_Keys\ALL_MODELS_EXPORT.bat`.
 - [ ] Confirm `UNIFIED\AllModels_TradeLog_YYYYMMDD.csv` and `UNIFIED\Reports\Daily_Trade_Performance_YYYYMMDD.md` were created.
+- [ ] Spot-check the unified trade log for correct model stamping:
+  - [ ] V1A/V1B registry accounts are stamped V1A or V1B as intended.
+  - [ ] V3C registry accounts are stamped V3C/Anchored_HMM_V3C, not V3D.
+  - [ ] V3D registry accounts are stamped V3D.
+- [ ] Confirm V3D directional lanes did not fire from `HMM=Transition`.
 - [ ] Confirm the live command windows have closed or stopped.
 - [ ] Review daily reports if needed.
 
