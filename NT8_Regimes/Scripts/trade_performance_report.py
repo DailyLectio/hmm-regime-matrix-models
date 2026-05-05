@@ -100,7 +100,18 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     for col in ("net_pnl", "gross_pnl", "ticks", "contracts", "r_multiple", "initial_stop_distance"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-    for col in ("model_version", "strategy_name", "bot_name", "exit_reason", "entry_regime", "data_quality_flag"):
+    for col in (
+        "account",
+        "model_version",
+        "strategy_name",
+        "bot_name",
+        "exported_bot_name",
+        "registry_tab_name",
+        "registry_chart_location",
+        "exit_reason",
+        "entry_regime",
+        "data_quality_flag",
+    ):
         if col not in df.columns:
             df[col] = ""
         df[col] = df[col].fillna("").astype(str)
@@ -182,6 +193,78 @@ def data_quality(df: pd.DataFrame) -> str:
     return "\n".join(f"- {flag}: {count}" for flag, count in counts.items())
 
 
+def shared_exporter_labels(df: pd.DataFrame, limit: int = 20) -> str:
+    if df.empty or "exported_bot_name" not in df.columns:
+        return "_No exporter-label diagnostics available._"
+    bot_text = df["exported_bot_name"].fillna("").astype(str).str.strip()
+    usable = ~bot_text.isin(["", "UNMAPPED", "UNKNOWN", "nan", "None"])
+    if not usable.any():
+        return "_No shared exporter labels detected._"
+
+    rows = []
+    grouped = df.loc[usable].assign(_exported_bot=bot_text[usable]).groupby("_exported_bot", dropna=False)
+    for label, group in grouped:
+        accounts = sorted({a.strip() for a in group["account"].astype(str) if a and a.strip() and a.strip().lower() != "nan"})
+        strategies = sorted({s.strip() for s in group["strategy_name"].astype(str) if s and s.strip() and s.strip().lower() != "nan"})
+        if len(accounts) <= 1 or len(strategies) <= 1:
+            continue
+        rows.append({
+            "exported_bot_name": label,
+            "trades": len(group),
+            "accounts": len(accounts),
+            "strategies": len(strategies),
+            "accounts_sample": ", ".join(accounts[:6]),
+        })
+
+    if not rows:
+        return "_No shared exporter labels detected._"
+
+    out = pd.DataFrame(rows).sort_values(["trades", "accounts", "strategies"], ascending=[False, False, False]).head(limit)
+    headers = ["exported_bot_name", "trades", "accounts", "strategies", "accounts_sample"]
+    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join([":--"] * len(headers)) + " |"]
+    for _, row in out.iterrows():
+        lines.append(
+            "| " + " | ".join([
+                str(row["exported_bot_name"]),
+                str(int(row["trades"])),
+                str(int(row["accounts"])),
+                str(int(row["strategies"])),
+                str(row["accounts_sample"]),
+            ]) + " |"
+        )
+    return "\n".join(lines)
+
+
+def affected_accounts_table(df: pd.DataFrame, limit: int = 40) -> str:
+    if df.empty or "data_quality_flag" not in df.columns:
+        return "_No affected-account diagnostics available._"
+    suspect = df[df["data_quality_flag"].str.contains("SHARED_EXPORTER_LABEL", regex=False, na=False)].copy()
+    if suspect.empty:
+        return "_No accounts flagged for shared exporter labels._"
+
+    rows = []
+    group_cols = ["model_version", "account", "strategy_name", "registry_chart_location", "registry_tab_name"]
+    grouped = suspect.groupby(group_cols, dropna=False)
+    for key, group in grouped:
+        if not isinstance(key, tuple):
+            key = (key,)
+        exported = sorted({b.strip() for b in group["exported_bot_name"].astype(str) if b and b.strip() and b.strip().lower() != "nan"})
+        rows.append({
+            **{group_cols[i]: key[i] for i in range(len(group_cols))},
+            "trades": len(group),
+            "exported_bot_names": ", ".join(exported[:4]),
+        })
+
+    out = pd.DataFrame(rows).sort_values(["trades", "model_version", "account"], ascending=[False, True, True]).head(limit)
+    headers = group_cols + ["trades", "exported_bot_names"]
+    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join([":--"] * len(headers)) + " |"]
+    for _, row in out.iterrows():
+        values = [str(row[c]) for c in group_cols]
+        values.extend([str(int(row["trades"])), str(row["exported_bot_names"])])
+        lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines)
+
+
 def source_lines(paths: list[Path]) -> str:
     return "\n".join(f"- `{path}`" for path in paths)
 
@@ -199,8 +282,17 @@ def write_daily(base_dir: Path, report_date: date) -> Path:
         "## By Model",
         summary_table(df, ["model_version"]),
         "",
-        "## By Strategy / Bot",
-        summary_table(df, ["model_version", "strategy_name", "bot_name"]),
+        "## By Account",
+        summary_table(df, ["model_version", "account"], limit=30),
+        "",
+        "## By Account / Strategy",
+        summary_table(df, ["model_version", "account", "strategy_name"], limit=40),
+        "",
+        "## Shared Exporter Labels",
+        shared_exporter_labels(df),
+        "",
+        "## Affected Accounts / Charts",
+        affected_accounts_table(df),
         "",
         "## By Exit Reason",
         summary_table(df, ["exit_reason"]),
@@ -238,8 +330,17 @@ def write_weekly(base_dir: Path, week_ending: date) -> Path:
         "## By Model",
         summary_table(df, ["model_version"]),
         "",
-        "## By Strategy / Bot",
-        summary_table(df, ["model_version", "strategy_name", "bot_name"]),
+        "## By Account",
+        summary_table(df, ["model_version", "account"], limit=40),
+        "",
+        "## By Account / Strategy",
+        summary_table(df, ["model_version", "account", "strategy_name"], limit=60),
+        "",
+        "## Shared Exporter Labels",
+        shared_exporter_labels(df),
+        "",
+        "## Affected Accounts / Charts",
+        affected_accounts_table(df, limit=60),
         "",
         "## By Day",
         summary_table(df, ["trade_date"]),

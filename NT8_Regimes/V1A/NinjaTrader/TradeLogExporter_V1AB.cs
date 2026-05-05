@@ -61,6 +61,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private string leaderSymbol = "";
         private readonly HashSet<string> seenExecutionIds = new HashSet<string>();
+        private bool hasWarnedMissingAccountFilter = false;
 
         private bool hasPendingEntry = false;
         private string pendingEntryTime = "";
@@ -91,6 +92,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 Print("TradeLogExporter_V1AB [" + leaderSymbol + " / " + BotName +
                       " / " + CleanModelVersion() + "]: Ready. Log: " + logPath);
+                if (string.IsNullOrWhiteSpace(AccountNameFilter))
+                    Print("TradeLogExporter_V1AB WARNING: AccountNameFilter is blank. Exporter will ignore fills until an exact account name is set.");
 
                 lock (Account.All)
                 {
@@ -115,8 +118,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
 
             string accountName = execution.Account == null ? "Unknown" : execution.Account.Name;
-            if (!string.IsNullOrWhiteSpace(AccountNameFilter) &&
-                !accountName.Equals(AccountNameFilter, StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(AccountNameFilter))
+            {
+                if (!hasWarnedMissingAccountFilter)
+                {
+                    Print("TradeLogExporter_V1AB WARNING: Skipping fills because AccountNameFilter is blank. Set it to the exact NT8 account name for this chart.");
+                    hasWarnedMissingAccountFilter = true;
+                }
+                return;
+            }
+            if (!accountName.Equals(AccountNameFilter, StringComparison.OrdinalIgnoreCase))
                 return;
 
             string execSymbol = execution.Instrument.MasterInstrument.Name.ToUpper();

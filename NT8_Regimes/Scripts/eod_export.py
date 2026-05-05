@@ -41,6 +41,12 @@ UNIFIED_COLUMNS = [
     "account",
     "strategy_name",
     "bot_name",
+    "exported_strategy_name",
+    "exported_bot_name",
+    "registry_strategy_name",
+    "registry_bot_name",
+    "registry_tab_name",
+    "registry_chart_location",
     "ab_mode",
     "symbol",
     "instrument",
@@ -160,6 +166,17 @@ def registry_entry(registry: dict[str, dict[str, Any]], account: Any) -> dict[st
     if exact in registry:
         return registry[exact]
     return registry.get(normalize_account_key(account), {})
+
+
+def text_series(df: pd.DataFrame, column: str, default: str = "") -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(default, index=df.index, dtype="object")
+    return df[column].fillna(default).astype(str)
+
+
+def missing_text_mask(series: pd.Series) -> pd.Series:
+    text = series.fillna("").astype(str).str.strip()
+    return text.isin(["", "UNKNOWN", "UNMAPPED", "N/A", "nan", "None"])
 
 
 def load_registry(path: Path) -> dict[str, dict[str, Any]]:
@@ -305,15 +322,48 @@ def apply_registry(df: pd.DataFrame, registry: dict[str, dict[str, Any]]) -> pd.
         return str(registry_entry(registry, account).get(key, default))
 
     registry_model = df["account"].map(lambda x: lookup(x, "model", "UNKNOWN"))
+    registry_strategy = df["account"].map(lambda x: lookup(x, "strategy", "UNKNOWN"))
+    registry_bot = df["account"].map(lambda x: lookup(x, "bot_name", ""))
+    registry_tab = df["account"].map(lambda x: lookup(x, "tab_name", ""))
+    registry_chart = df["account"].map(lambda x: lookup(x, "chart_location", ""))
+    registry_ab = df["account"].map(lambda x: lookup(x, "ab_mode", "N/A"))
+    exported_strategy = text_series(df, "strategy_name").str.strip()
+    exported_bot = text_series(df, "bot_name").str.strip().replace({"Unknown_Bot": "UNMAPPED"})
+    exported_ab = text_series(df, "ab_mode", "N/A").str.strip()
+
+    df["exported_strategy_name"] = exported_strategy
+    df["exported_bot_name"] = exported_bot
+    df["registry_strategy_name"] = registry_strategy
+    df["registry_bot_name"] = registry_bot
+    df["registry_tab_name"] = registry_tab
+    df["registry_chart_location"] = registry_chart
+
     known_raw_model = raw_model.isin(["V1A", "V1B", "V3C", "V3D", "OG"])
     weak_registry_model = registry_model.astype(str).str.upper().isin(["UNKNOWN", "STANDALONE", ""])
     df["model_version"] = registry_model
     df.loc[known_raw_model & weak_registry_model, "model_version"] = raw_model[known_raw_model & weak_registry_model]
-    df["strategy_name"] = df["account"].map(lambda x: lookup(x, "strategy", "UNKNOWN"))
-    df["ab_mode"] = df["account"].map(lambda x: lookup(x, "ab_mode", "N/A"))
-    if "bot_name" not in df.columns:
-        df["bot_name"] = "UNMAPPED"
-    df["bot_name"] = df["bot_name"].replace({"Unknown_Bot": "UNMAPPED", "": "UNMAPPED"}).fillna("UNMAPPED")
+
+    df["strategy_name"] = exported_strategy
+    missing_strategy = missing_text_mask(df["strategy_name"])
+    df.loc[missing_strategy, "strategy_name"] = registry_strategy[missing_strategy]
+
+    df["ab_mode"] = exported_ab
+    missing_ab = missing_text_mask(df["ab_mode"])
+    df.loc[missing_ab, "ab_mode"] = registry_ab[missing_ab]
+
+    # The V1A/V1B/V3D indicator exporters only emit BotName, not strategy_name.
+    # Prefer the registry label for those rows so a misconfigured exporter label
+    # does not become the main tracking key in the unified report.
+    fallback_bot = registry_bot.where(~missing_text_mask(registry_bot), registry_tab)
+    fallback_bot = fallback_bot.where(~missing_text_mask(fallback_bot), registry_strategy)
+    normalized_bot = exported_bot.copy()
+    no_raw_strategy = missing_text_mask(exported_strategy)
+    normalized_bot.loc[no_raw_strategy] = fallback_bot[no_raw_strategy]
+    missing_bot = missing_text_mask(normalized_bot)
+    normalized_bot.loc[missing_bot] = fallback_bot[missing_bot]
+    df["bot_name"] = normalized_bot.fillna("").astype(str).str.strip()
+    df.loc[missing_text_mask(df["bot_name"]), "bot_name"] = "UNMAPPED"
+
     og_mask = raw_model.eq("OG")
     if og_mask.any():
         df.loc[og_mask, "model_version"] = "OG"
@@ -549,8 +599,30 @@ def derive_columns(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = pd.NA
         df[col] = df[col].replace({"UNAVAILABLE": pd.NA, "": pd.NA})
 
+    shared_exporter_label_mask = pd.Series(False, index=df.index)
+    if "exported_bot_name" in df.columns:
+        exported_bot = df["exported_bot_name"].fillna("").astype(str).str.strip()
+        usable_bot = ~exported_bot.isin(["", "UNMAPPED", "UNKNOWN", "nan", "None"])
+        if usable_bot.any():
+            bot_profile = (
+                df.loc[usable_bot]
+                .assign(_exported_bot=exported_bot[usable_bot])
+                .groupby("_exported_bot", dropna=False)
+                .agg(
+                    account_count=("account", lambda s: s.fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
+                    strategy_count=("strategy_name", lambda s: s.fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
+                )
+            )
+            suspect_bots = bot_profile[
+                (bot_profile["account_count"] > 1) & (bot_profile["strategy_count"] > 1)
+            ].index
+            if len(suspect_bots) > 0:
+                shared_exporter_label_mask = usable_bot & exported_bot.isin(suspect_bots)
+
     def flags(row: pd.Series) -> str:
         found: list[str] = []
+        if str(row.get("account", "")).strip() in ("", "nan", "None"):
+            found.append("MISSING_ACCOUNT")
         if row.get("model_version") == "UNKNOWN" or row.get("strategy_name") == "UNKNOWN":
             found.append("UNMAPPED_ACCOUNT")
         if pd.isna(row.get("entry_regime")):
@@ -559,10 +631,13 @@ def derive_columns(df: pd.DataFrame) -> pd.DataFrame:
             found.append("MISSING_EXITREASON")
         if str(row.get("bot_name", "")).strip() == "UNMAPPED":
             found.append("UNMAPPED_BOT")
+        if bool(row.get("_shared_exporter_label", False)):
+            found.append("SHARED_EXPORTER_LABEL")
         return ";".join(found) if found else "OK"
 
+    df["_shared_exporter_label"] = shared_exporter_label_mask
     df["data_quality_flag"] = df.apply(flags, axis=1)
-    return df
+    return df.drop(columns=["_shared_exporter_label"])
 
 
 def final_shape(df: pd.DataFrame) -> pd.DataFrame:
@@ -602,7 +677,18 @@ def write_outputs(base_dir: Path, df: pd.DataFrame, export_date: date | None) ->
         for flag, count in counts.items():
             handle.write(f"  {flag}: {count}\n")
         handle.write("\nNon-OK rows:\n")
-        problem_cols = ["trade_date", "entry_time", "account", "model_version", "strategy_name", "bot_name", "data_quality_flag"]
+        problem_cols = [
+            "trade_date",
+            "entry_time",
+            "account",
+            "model_version",
+            "strategy_name",
+            "bot_name",
+            "exported_bot_name",
+            "registry_chart_location",
+            "registry_tab_name",
+            "data_quality_flag",
+        ]
         for _, row in df[df["data_quality_flag"] != "OK"][problem_cols].iterrows():
             handle.write("  " + " | ".join(str(row[c]) for c in problem_cols) + "\n")
     written.append(report_path)
