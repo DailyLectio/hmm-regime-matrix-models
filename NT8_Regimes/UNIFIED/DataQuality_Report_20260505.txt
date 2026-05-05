@@ -1,5 +1,5 @@
 Data Quality Report 20260505
-Generated: 2026-05-05 17:56:53
+Generated: 2026-05-05 18:45:00
 Rows: 105
 
 Flag counts:

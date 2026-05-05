@@ -5,6 +5,7 @@ Generate daily and end-of-week markdown performance reports from unified trade l
 from __future__ import annotations
 
 import argparse
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -108,6 +109,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
         "exported_bot_name",
         "registry_tab_name",
         "registry_chart_location",
+        "source_file",
         "exit_reason",
         "entry_regime",
         "data_quality_flag",
@@ -137,7 +139,62 @@ def win_rate(series: pd.Series) -> float:
     return float((pd.to_numeric(series, errors="coerce").fillna(0) > 0).mean() * 100)
 
 
-def summary_table(df: pd.DataFrame, group_cols: list[str], limit: int = 20) -> str:
+MODEL_SORT_ORDER = {
+    "V1A": 0,
+    "V1B": 1,
+    "V3C": 2,
+    "V3D": 3,
+    "OG": 4,
+}
+
+
+def account_sort_parts(account: str) -> tuple[int, str, str]:
+    text = str(account or "").strip()
+    if not text or text.lower() == "nan":
+        return (999, "Z", "")
+    upper = text.upper()
+    lane = re.search(r"-(\d+)([A-Z])$", upper)
+    if lane:
+        return (int(lane.group(1)), lane.group(2), upper)
+    trailing = re.search(r"(\d+)$", upper)
+    if trailing:
+        return (int(trailing.group(1)), "", upper)
+    return (900, "", upper)
+
+
+def sort_summary_rows(out: pd.DataFrame, group_cols: list[str], sort_mode: str, limit: int) -> pd.DataFrame:
+    if out.empty:
+        return out
+    if sort_mode == "account":
+        model_rank = out["model_version"].map(lambda x: MODEL_SORT_ORDER.get(str(x).upper(), 99)) if "model_version" in out.columns else 99
+        account_text = out["account"] if "account" in out.columns else pd.Series("", index=out.index)
+        account_parts = account_text.map(account_sort_parts)
+        out = out.assign(
+            _model_rank=model_rank,
+            _lane_num=account_parts.map(lambda x: x[0]),
+            _lane_alpha=account_parts.map(lambda x: x[1]),
+            _account_text=account_parts.map(lambda x: x[2]),
+            _strategy_text=out["strategy_name"].astype(str).str.upper() if "strategy_name" in out.columns else "",
+        )
+        sort_cols = ["_model_rank", "_lane_num", "_lane_alpha", "_account_text"]
+        ascending = [True, True, True, True]
+        if "strategy_name" in out.columns:
+            sort_cols.append("_strategy_text")
+            ascending.append(True)
+        if "net_pnl" in out.columns:
+            sort_cols.append("net_pnl")
+            ascending.append(False)
+        if "trades" in out.columns:
+            sort_cols.append("trades")
+            ascending.append(False)
+        return out.sort_values(sort_cols, ascending=ascending, kind="mergesort").head(limit).drop(
+            columns=["_model_rank", "_lane_num", "_lane_alpha", "_account_text", "_strategy_text"],
+            errors="ignore",
+        )
+    return out.sort_values(["net_pnl", "trades"], ascending=[False, False], kind="mergesort").head(limit)
+
+
+def summary_table(df: pd.DataFrame, group_cols: list[str], limit: int = 20, sort_mode: str = "performance") -> str:
     if df.empty:
         return "_No rows._"
     rows = []
@@ -154,7 +211,7 @@ def summary_table(df: pd.DataFrame, group_cols: list[str], limit: int = 20) -> s
             "net_pnl": net,
             "avg_r": r_avg,
         })
-    out = pd.DataFrame(rows).sort_values(["net_pnl", "trades"], ascending=[False, False]).head(limit)
+    out = sort_summary_rows(pd.DataFrame(rows), group_cols, sort_mode, limit)
     headers = group_cols + ["trades", "win_rate", "net_pnl", "avg_r"]
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join([":--"] * len(headers)) + " |"]
     for _, row in out.iterrows():
@@ -184,6 +241,55 @@ def headline(df: pd.DataFrame) -> list[str]:
         f"- R-ready rows: {r_rows:,} of {len(df):,}",
         f"- Initial-stop rows: {risk_rows:,} of {len(df):,}",
     ]
+
+
+def executive_summary(df: pd.DataFrame) -> list[str]:
+    if df.empty:
+        return ["No trades were available for this report."]
+
+    notes: list[str] = []
+
+    by_model = (
+        df.groupby("model_version", dropna=False)["net_pnl"]
+        .agg(["sum", "count"])
+        .reset_index()
+        .rename(columns={"sum": "net_pnl", "count": "trades"})
+    )
+    if not by_model.empty:
+        worst_model = by_model.sort_values("net_pnl", ascending=True).iloc[0]
+        best_model = by_model.sort_values("net_pnl", ascending=False).iloc[0]
+        notes.append(
+            f"Net day was {fmt_money(df['net_pnl'].sum())}; weakest model was {worst_model['model_version']} "
+            f"at {fmt_money(worst_model['net_pnl'])} across {int(worst_model['trades'])} trades."
+        )
+        if float(best_model["net_pnl"]) > 0:
+            notes.append(
+                f"Best contributing model was {best_model['model_version']} at {fmt_money(best_model['net_pnl'])}."
+            )
+
+    blank_accounts = df[df["account"].astype(str).str.strip().isin(["", "nan"])]
+    if not blank_accounts.empty:
+        sources = sorted(set(blank_accounts["source_file"].astype(str)))
+        notes.append(
+            f"{len(blank_accounts)} trades still have blank account names; all of them came from "
+            f"{', '.join(sources)}."
+        )
+
+    shared = df[df["data_quality_flag"].str.contains("SHARED_EXPORTER_LABEL", regex=False, na=False)]
+    if not shared.empty:
+        top_label = (
+            shared.groupby("exported_bot_name", dropna=False)
+            .size()
+            .sort_values(ascending=False)
+            .reset_index(name="trades")
+            .iloc[0]
+        )
+        notes.append(
+            f"Largest naming collision remains exporter label `{top_label['exported_bot_name']}` on "
+            f"{int(top_label['trades'])} trades."
+        )
+
+    return [f"- {note}" for note in notes[:4]]
 
 
 def data_quality(df: pd.DataFrame) -> str:
@@ -255,13 +361,29 @@ def affected_accounts_table(df: pd.DataFrame, limit: int = 40) -> str:
             "exported_bot_names": ", ".join(exported[:4]),
         })
 
-    out = pd.DataFrame(rows).sort_values(["trades", "model_version", "account"], ascending=[False, True, True]).head(limit)
+    out = pd.DataFrame(rows)
+    out = sort_summary_rows(out, ["model_version", "account", "strategy_name"], "account", limit)
+    out = out.head(limit)
     headers = group_cols + ["trades", "exported_bot_names"]
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join([":--"] * len(headers)) + " |"]
     for _, row in out.iterrows():
         values = [str(row[c]) for c in group_cols]
         values.extend([str(int(row["trades"])), str(row["exported_bot_names"])])
         lines.append("| " + " | ".join(values) + " |")
+    return "\n".join(lines)
+
+
+def missing_account_rows(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "_No missing-account rows._"
+    blank = df[df["account"].astype(str).str.strip().isin(["", "nan"])].copy()
+    if blank.empty:
+        return "_No missing-account rows._"
+    cols = ["entry_time", "model_version", "strategy_name", "bot_name", "source_file"]
+    headers = cols
+    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join([":--"] * len(headers)) + " |"]
+    for _, row in blank.sort_values(["entry_time", "strategy_name"], kind="mergesort").iterrows():
+        lines.append("| " + " | ".join(str(row[c]) for c in cols) + " |")
     return "\n".join(lines)
 
 
@@ -279,20 +401,26 @@ def write_daily(base_dir: Path, report_date: date) -> Path:
         "## Headline",
         *headline(df),
         "",
+        "## Executive Summary",
+        *executive_summary(df),
+        "",
         "## By Model",
         summary_table(df, ["model_version"]),
         "",
         "## By Account",
-        summary_table(df, ["model_version", "account"], limit=30),
+        summary_table(df, ["model_version", "account"], limit=30, sort_mode="account"),
         "",
         "## By Account / Strategy",
-        summary_table(df, ["model_version", "account", "strategy_name"], limit=40),
+        summary_table(df, ["model_version", "account", "strategy_name"], limit=40, sort_mode="account"),
         "",
         "## Shared Exporter Labels",
         shared_exporter_labels(df),
         "",
         "## Affected Accounts / Charts",
         affected_accounts_table(df),
+        "",
+        "## Missing Account Rows",
+        missing_account_rows(df),
         "",
         "## By Exit Reason",
         summary_table(df, ["exit_reason"]),
@@ -327,20 +455,26 @@ def write_weekly(base_dir: Path, week_ending: date) -> Path:
         "## Weekly Headline",
         *headline(df),
         "",
+        "## Executive Summary",
+        *executive_summary(df),
+        "",
         "## By Model",
         summary_table(df, ["model_version"]),
         "",
         "## By Account",
-        summary_table(df, ["model_version", "account"], limit=40),
+        summary_table(df, ["model_version", "account"], limit=40, sort_mode="account"),
         "",
         "## By Account / Strategy",
-        summary_table(df, ["model_version", "account", "strategy_name"], limit=60),
+        summary_table(df, ["model_version", "account", "strategy_name"], limit=60, sort_mode="account"),
         "",
         "## Shared Exporter Labels",
         shared_exporter_labels(df),
         "",
         "## Affected Accounts / Charts",
         affected_accounts_table(df, limit=60),
+        "",
+        "## Missing Account Rows",
+        missing_account_rows(df),
         "",
         "## By Day",
         summary_table(df, ["trade_date"]),

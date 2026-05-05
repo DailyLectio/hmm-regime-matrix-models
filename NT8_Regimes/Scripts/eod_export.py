@@ -47,6 +47,7 @@ UNIFIED_COLUMNS = [
     "registry_bot_name",
     "registry_tab_name",
     "registry_chart_location",
+    "source_file",
     "ab_mode",
     "symbol",
     "instrument",
@@ -179,6 +180,34 @@ def missing_text_mask(series: pd.Series) -> pd.Series:
     return text.isin(["", "UNKNOWN", "UNMAPPED", "N/A", "nan", "None"])
 
 
+def normalize_exit_reason_value(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "UNKNOWN"
+    upper = text.upper().replace(" ", "_")
+    aliases = {
+        "PROFIT_TARGET": "TARGET_HIT",
+        "TARGET1": "TARGET_HIT",
+        "TARGET_HIT": "TARGET_HIT",
+        "STOP_LOSS": "STOP_HIT",
+        "STOP1": "STOP_HIT",
+        "STOP_HIT": "STOP_HIT",
+        "SLOPEX": "SLOPE_EXIT",
+        "SLOPE_EXIT": "SLOPE_EXIT",
+        "ENVELOPEBREAKEXIT": "ENVELOPE_BREAK_EXIT",
+        "ENVELOPE_BREAK_EXIT": "ENVELOPE_BREAK_EXIT",
+        "SESSION_CLOSE": "SESSION_CLOSE",
+        "CLOSE": "SESSION_CLOSE",
+        "AI": "AI",
+        "UNKNOWN": "UNKNOWN",
+    }
+    compact = upper.replace("_", "")
+    for key, normalized in aliases.items():
+        if upper == key or compact == key.replace("_", ""):
+            return normalized
+    return text
+
+
 def load_registry(path: Path) -> dict[str, dict[str, Any]]:
     """Load accounts_registry.json.
 
@@ -306,6 +335,8 @@ def normalize_trades(df: pd.DataFrame) -> pd.DataFrame:
     df["win_loss"] = df["win_loss"].fillna(
         pd.Series(["WIN" if x > 0 else "LOSS" if x < 0 else "SCRATCH" for x in pnl], index=df.index)
     )
+    if "exit_reason" in df.columns:
+        df["exit_reason"] = df["exit_reason"].map(normalize_exit_reason_value)
 
     return df
 
