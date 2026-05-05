@@ -1,0 +1,2 @@
+trade_date,entry_time,exit_time,model_version,account,strategy_name,bot_name,ab_mode,symbol,instrument,direction,contracts,entry_price,exit_price,gross_pnl,net_pnl,ticks,win_loss,exit_reason,initial_stop_price,initial_stop_distance,export_timestamp
+2026-05-05,2026-05-05 12:50:00,2026-05-05 13:00:00,V3C,SimV3C-NQ-4B,Momo_V3C Mode B,Momo_V3C Mode B,N/A,NQ,NQ JUN26,LONG,1,28120.7500,28123.0000,45.00,45.00,9.0,WIN,SlopeX,,,2026-05-05 12:55:00
