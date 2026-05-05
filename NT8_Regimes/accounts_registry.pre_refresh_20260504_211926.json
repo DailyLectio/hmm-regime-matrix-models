@@ -1,0 +1,349 @@
+{
+  "Sim1": {
+    "model": "UNKNOWN",
+    "strategy": "MomentumRange_RangeBar",
+    "ab_mode": "N/A",
+    "data_series": "15 Range VOL",
+    "session": "RTH",
+    "tab_name": "15 Range Momentum Range",
+    "template": "MomentumRange_RangeBar"
+  },
+  "SimV1A Vol Fader 1": {
+    "model": "V1A",
+    "strategy": "VolState Fader",
+    "ab_mode": "A",
+    "data_series": "3 min candle",
+    "session": "RTH",
+    "tab_name": "VOL FADER Mode A- Pure V1A",
+    "template": "VolState Fader V1B Mode A(Pure V1A)"
+  },
+  "SimV1A Vol Fader 2": {
+    "model": "V1A",
+    "strategy": "VolState Fader",
+    "ab_mode": "A+",
+    "data_series": "3 min candle",
+    "session": "RTH",
+    "tab_name": "VOL FADER Mode A+(Context)",
+    "template": "V1B - Mode A+(Context)"
+  },
+  "SimV1A Vol Fader 3": {
+    "model": "V1B",
+    "strategy": "VolState Fader",
+    "ab_mode": "B",
+    "data_series": "3 min candle",
+    "session": "RTH",
+    "tab_name": "VolState Mode B(Full V1B)",
+    "template": "Mode B(Full V1B) all true"
+  },
+  "SimV1A Kalman Fader 1": {
+    "model": "V1A",
+    "strategy": "KalmanPulse_Fader",
+    "ab_mode": "A",
+    "data_series": "12 Range",
+    "session": "ETH",
+    "tab_name": "Kalman Fader Mode A",
+    "template": "KalmanPulse Fader 1  A"
+  },
+  "SimV1A Kalman Fader 2": {
+    "model": "V1A",
+    "strategy": "KalmanPulse_Fader",
+    "ab_mode": "A+",
+    "data_series": "12 Range",
+    "session": "ETH",
+    "tab_name": "Kalman Fade Mode A+",
+    "template": "Mode A+ kill switch & bias true"
+  },
+  "SimV1A Kalman Fader 3": {
+    "model": "V1B",
+    "strategy": "KalmanPulse_Fader",
+    "ab_mode": "B",
+    "data_series": "12 Range",
+    "session": "ETH",
+    "tab_name": "Kalman Fade Mode B",
+    "template": "Mode B footprint +kill switch + bias = true"
+  },
+  "SimV1A Composite Momentum 1": {
+    "model": "V1A",
+    "strategy": "CompositeEdge_Momentum",
+    "ab_mode": "A",
+    "data_series": "5 min candle",
+    "session": "RTH",
+    "tab_name": "Composite Momo Mode A",
+    "template": "Mode A all false"
+  },
+  "SimV1A Composite Momentum 2": {
+    "model": "V1A",
+    "strategy": "CompositeEdge_Momentum",
+    "ab_mode": "A+",
+    "data_series": "5 min candle",
+    "session": "RTH",
+    "tab_name": "Composite Momo Mode A+",
+    "template": "Mode A+ kill + bias = true"
+  },
+  "SimV1A Composite Momentum 3": {
+    "model": "V1B",
+    "strategy": "CompositeEdge_Momentum",
+    "ab_mode": "B",
+    "data_series": "5 min candle",
+    "session": "RTH",
+    "tab_name": "Composite Momo Mode B",
+    "template": "Mode B all = true"
+  },
+  "SimV3C-NQ-1A": {
+    "model": "V3C",
+    "strategy": "V3_Expansion_Rider_V3C",
+    "ab_mode": "N/A",
+    "data_series": "Uni 40-80-120",
+    "session": "RTH",
+    "tab_name": "Expansion V1A",
+    "template": "NQ Fast 40-80-120"
+  },
+  "SimV3C-NQ-1B": {
+    "model": "V3C",
+    "strategy": "V3_Expansion_Rider_V3C",
+    "ab_mode": "N/A",
+    "data_series": "Uni 60-120-180",
+    "session": "RTH",
+    "tab_name": "Expansion B 60",
+    "template": "NQ Clean 60-120-180"
+  },
+  "SimV3C-NQ-2A": {
+    "model": "V3C",
+    "strategy": "NQ VC3-A Compression Fast",
+    "ab_mode": "N/A",
+    "data_series": "Uni 20-40-60",
+    "session": "RTH",
+    "tab_name": "Compression Sniper A",
+    "template": "NQ VC3-A Compression Fast 20-40-60"
+  },
+  "SimV3C-NQ-2B": {
+    "model": "V3C",
+    "strategy": "NQ V3C Compression Clean B",
+    "ab_mode": "N/A",
+    "data_series": "Uni 16-32-48",
+    "session": "RTH",
+    "tab_name": "Compression Sniper B",
+    "template": "NQ V3C Compression Clean B 16-32-48"
+  },
+  "SimV3C-NQ-2C": {
+    "model": "V3C",
+    "strategy": "V3_Compression_Sniper_V3C",
+    "ab_mode": "N/A",
+    "data_series": "Uni 20-40-60",
+    "session": "RTH",
+    "tab_name": "Compression Sniper C 20-40-60",
+    "template": "NQ VC3-A Compression Fast 20-40-60"
+  },
+  "SimV3C-NQ-3A": {
+    "model": "V3C",
+    "strategy": "V3_Value_Fader",
+    "ab_mode": "N/A",
+    "data_series": "5 min candle",
+    "session": "RTH",
+    "tab_name": "Value Fader A",
+    "template": "Value Fader A 5m"
+  },
+  "SimV3C-NQ-3B": {
+    "model": "V3C",
+    "strategy": "V3_Value_Fader_V3C 3m",
+    "ab_mode": "N/A",
+    "data_series": "3 min candle",
+    "session": "RTH",
+    "tab_name": "Value Fader B",
+    "template": "Value Fader B 3m"
+  },
+  "SimV3C-NQ-4A": {
+    "model": "V3C",
+    "strategy": "Momo_V3C",
+    "ab_mode": "N/A",
+    "data_series": "5 min candle",
+    "session": "RTH",
+    "tab_name": "Momentum Slope A",
+    "template": "Momo 5M Hysteresis"
+  },
+  "SimV3C-NQ-4B": {
+    "model": "V3C",
+    "strategy": "Momo_V3C",
+    "ab_mode": "N/A",
+    "data_series": "5 min candle",
+    "session": "RTH",
+    "tab_name": "Momentum Slope B",
+    "template": "Momo 5m Simple"
+  },
+  "SimMomo1": {
+    "model": "V3C",
+    "strategy": "MomentumSlopeStrategy v1.2",
+    "ab_mode": "N/A",
+    "data_series": "1 min Heiken Ashi",
+    "session": "RTH",
+    "tab_name": "Momo 1mHA OG",
+    "template": "--- Momentum OG 1m HEIKEN ASHI"
+  },
+  "SimMomo2": {
+    "model": "V3C",
+    "strategy": "MomentumSlopeStrategy v1.3",
+    "ab_mode": "N/A",
+    "data_series": "5 min Heiken Ashi",
+    "session": "RTH",
+    "tab_name": "Momo 5mHA OG",
+    "template": "NQ.5m.Momov1.2.RTHV1001"
+  },
+  "SimV3C-NQ-5A": {
+    "model": "V3C",
+    "strategy": "ADX_DI_V3C",
+    "ab_mode": "N/A",
+    "data_series": "5 min candle",
+    "session": "RTH",
+    "tab_name": "ADX 5m Trinity OFF",
+    "template": "NQ.ADX.DI.5m.V3C - 5A"
+  },
+  "SimV3C-NQ-5B": {
+    "model": "V3C",
+    "strategy": "ADX_DI_V3C",
+    "ab_mode": "N/A",
+    "data_series": "5 min candle",
+    "session": "RTH",
+    "tab_name": "ADX 5m Trinity ON",
+    "template": "NQ.ADX.DI.5m.V3C - 5B Trinitiy ON"
+  },
+  "SimV3D-NQ-1A": {
+    "model": "V3D",
+    "strategy": "Expansion_V3D",
+    "ab_mode": "N/A",
+    "data_series": "Uni 40-80-120",
+    "session": "RTH",
+    "tab_name": "Expansion A",
+    "template": "Expansion_V3D",
+    "bot_name": "Expansion_V3D"
+  },
+  "SimV3D-NQ-1B": {
+    "model": "V3D",
+    "strategy": "Expansion_V3D_B",
+    "ab_mode": "N/A",
+    "data_series": "Uni 60-120-180",
+    "session": "RTH",
+    "tab_name": "Expansion B",
+    "template": "Expansion_V3D_B",
+    "bot_name": "Expansion_V3D_B"
+  },
+  "SimV3D-NQ-2A": {
+    "model": "V3D",
+    "strategy": "Momentum_V3D",
+    "ab_mode": "N/A",
+    "data_series": "1 min candle",
+    "session": "RTH",
+    "tab_name": "Momentum A",
+    "template": "Momentum_V3D",
+    "bot_name": "Momentum_V3D"
+  },
+  "SimV3D-NQ-2B": {
+    "model": "V3D",
+    "strategy": "Momentum_V3D_B",
+    "ab_mode": "N/A",
+    "data_series": "3 min candle",
+    "session": "RTH",
+    "tab_name": "Momentum B",
+    "template": "Momentum_V3D_B",
+    "bot_name": "Momentum_V3D_B"
+  },
+  "SimV3D-NQ-3A": {
+    "model": "V3D",
+    "strategy": "Fader_V3D",
+    "ab_mode": "N/A",
+    "data_series": "1 min candle",
+    "session": "RTH",
+    "tab_name": "Fader A",
+    "template": "Fader_V3D A",
+    "bot_name": "Fader_V3D"
+  },
+  "SimV3D-NQ-3B": {
+    "model": "V3D",
+    "strategy": "Fader_V3D_B",
+    "ab_mode": "N/A",
+    "data_series": "5 min candle",
+    "session": "RTH",
+    "tab_name": "Fader B",
+    "template": "Fader_V3D_B",
+    "bot_name": "Fader_V3D_B"
+  },
+  "SimV3D-NQ-4A": {
+    "model": "V3D",
+    "strategy": "Sniper_V3D",
+    "ab_mode": "N/A",
+    "data_series": "3 min candle",
+    "session": "RTH",
+    "tab_name": "Sniper Pullbacks A",
+    "template": "Sniper_V3D 3m",
+    "bot_name": "Sniper_V3D"
+  },
+  "SimV3D-NQ-4B": {
+    "model": "V3D",
+    "strategy": "Sniper_V3D_B",
+    "ab_mode": "N/A",
+    "data_series": "3 min candle",
+    "session": "RTH",
+    "tab_name": "Sniper Pullbacks B",
+    "template": "Sniper_V3D_B",
+    "bot_name": "Sniper_V3D_B"
+  },
+  "SimV3D-NQ-5A": {
+    "model": "V3D",
+    "strategy": "ADX_DI_V3D",
+    "ab_mode": "N/A",
+    "data_series": "3 min candle",
+    "session": "ETH",
+    "tab_name": "ADX DI A",
+    "template": "ADX_DI_V3D",
+    "bot_name": "ADX_DI_V3D"
+  },
+  "SimV3D-NQ-5B": {
+    "model": "V3D",
+    "strategy": "ADX_DI_V3D",
+    "ab_mode": "N/A",
+    "data_series": "Uni 30-60-90",
+    "session": "ETH",
+    "tab_name": "ADX DI B",
+    "template": "ADX_DI_V3D Uni",
+    "bot_name": "ADX_DI_V3D"
+  },
+  "SimV3D-NQ-5C": {
+    "model": "V3D",
+    "strategy": "ADX_DI_V3D_C",
+    "ab_mode": "N/A",
+    "data_series": "3 min candle",
+    "session": "ETH",
+    "tab_name": "ADX DI C",
+    "template": "ADX_DI_V3D_C",
+    "bot_name": "ADX_DI_V3D_C"
+  },
+  "SimADX1": {
+    "model": "OG",
+    "strategy": "NQ_Momo_5m_OG",
+    "ab_mode": "N/A",
+    "data_series": "5 Minute",
+    "session": "RTH",
+    "tab_name": "ADX OG"
+  },
+  "SimPine2": {
+    "model": "OG",
+    "strategy": "KalmanPulse_Fader",
+    "ab_mode": "UNKNOWN",
+    "data_series": "8 Range",
+    "session": "RTH",
+    "note": "Unconfirmed mapping \u2014 verify in NinjaTrader"
+  },
+  "Sim101": {
+    "model": "OG",
+    "strategy": "MomentumRange_RangeBar",
+    "ab_mode": "N/A",
+    "data_series": "15 Range VOL",
+    "session": "RTH",
+    "note": "No architecture spec \u2014 decommission or document"
+  },
+  "DEMO1419193": {
+    "model": "EXCLUDE",
+    "strategy": "UNKNOWN",
+    "ab_mode": "UNKNOWN",
+    "note": "Live/demo brokerage account \u2014 exclude from all SIM analysis"
+  }
+}

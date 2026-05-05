@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -23,7 +22,7 @@ UNIFIED_DIR = BASE_DIR / "UNIFIED"
 
 RAW_TRADE_LOGS = [
     # These are the master per-model logs written by the NT8 TradeLogExporter.
-    # V3C is intentionally included here - its strategies write to V3C\TradeLog\.
+    # V3C is intentionally included here — its strategies write to V3C\TradeLog\.
     # If V3C strategies do not yet have Stage 1 logging, this path will not exist
     # and discover_raw_trade_logs() will skip it gracefully.
     BASE_DIR / "V1A" / "TradeLog" / "V1A_TradeLog.csv",
@@ -143,32 +142,13 @@ def parse_export_date(value: str) -> date | None:
     raise ValueError(f"Unsupported --date value: {value}")
 
 
-def normalize_account_key(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    # Some NT8 exports emit human-readable V1 account names with stray spaces
-    # around hyphens, for example "SimV1A - Kalman Fader 2". Normalize only
-    # those spaced separators so account ids like SimV3C-NQ-1A stay intact.
-    text = re.sub(r"\s+-\s*|\s*-\s+", " ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def registry_entry(registry: dict[str, dict[str, Any]], account: Any) -> dict[str, Any]:
-    exact = str(account or "")
-    if exact in registry:
-        return registry[exact]
-    return registry.get(normalize_account_key(account), {})
-
-
 def load_registry(path: Path) -> dict[str, dict[str, Any]]:
     """Load accounts_registry.json.
 
     If the file does not exist, raise a clear FileNotFoundError that tells the
-    operator exactly which file to place and where. The accounts_registry.json
+    operator exactly which file to place and where.  The accounts_registry.json
     is generated from the Master Accounts Registry CSV by the build_registry.py
-    helper - run that first if the file is missing.
+    helper — run that first if the file is missing.
     """
     if not path.exists():
         raise FileNotFoundError(
@@ -302,7 +282,7 @@ def apply_registry(df: pd.DataFrame, registry: dict[str, dict[str, Any]]) -> pd.
     )
 
     def lookup(account: Any, key: str, default: str) -> str:
-        return str(registry_entry(registry, account).get(key, default))
+        return str(registry.get(str(account), {}).get(key, default))
 
     registry_model = df["account"].map(lambda x: lookup(x, "model", "UNKNOWN"))
     known_raw_model = raw_model.isin(["V1A", "V1B", "V3C", "V3D", "OG"])
@@ -643,13 +623,13 @@ def main() -> int:
 
     # -------------------------------------------------------------------------
     # Contamination guard: correct model_version for any row whose account
-    # is registered under a different model. This fixes the bug where the
+    # is registered under a different model.  This fixes the bug where the
     # NT8 TradeLogExporter writes to V3D_TradeLog.csv regardless of which
     # account is active, stamping all rows as "V3D" even for V3C/V1A accounts.
     # -------------------------------------------------------------------------
     if "account" in trades.columns:
         registry_models = trades["account"].map(
-            lambda a: registry_entry(registry, a).get("model", "")
+            lambda a: registry.get(str(a), {}).get("model", "")
         )
         # Only override when the registry has a definite model and the row
         # has a raw model_version that conflicts.

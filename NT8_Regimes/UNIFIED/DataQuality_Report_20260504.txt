@@ -1,0 +1,10 @@
+Data Quality Report 20260504
+Generated: 2026-05-04 22:22:41
+Rows: 69
+
+Flag counts:
+  OK: 68
+  UNAVAILABLE_REGIME: 1
+
+Non-OK rows:
+  2026-05-04 | 2026-05-04 22:08:21 | Sim101 | OG | MomentumRange_RangeBar | 15 Range Momentum V1A | UNAVAILABLE_REGIME
