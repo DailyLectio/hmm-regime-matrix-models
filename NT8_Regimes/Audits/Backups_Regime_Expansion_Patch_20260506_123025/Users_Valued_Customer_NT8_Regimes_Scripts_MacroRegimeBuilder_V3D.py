@@ -161,21 +161,16 @@ def filter_rth(df: pd.DataFrame) -> pd.DataFrame:
 # 2. SESSION BUILDING — one DataFrame per trading day
 # ===========================================================================
 
-def build_sessions(df_rth: pd.DataFrame, symbol: str, live_guard: bool = False) -> pd.DataFrame:
+def build_sessions(df_rth: pd.DataFrame, symbol: str) -> pd.DataFrame:
     """
     Resample 1-min bars into 5-min checkpoint bars per trading session.
     Returns a DataFrame with one row per (date, checkpoint).
-
-    When live_guard is True, checkpoint rows later than the latest actual
-    timestamp for that trade_date are skipped. This prevents a partial live
-    session from projecting later checkpoints from the same last observed bar.
     """
     thr = THRESHOLDS[symbol]
     rows = []
 
     for trade_date, day_df in df_rth.groupby(df_rth["Timestamp"].dt.date):
         day_df = day_df.sort_values("Timestamp").copy()
-        latest_actual_ts = day_df["Timestamp"].max()
 
         # Session VWAP (price * volume sum / volume sum)
         pv = (day_df["Close"] * day_df["Volume"]).cumsum()
@@ -200,16 +195,6 @@ def build_sessions(df_rth: pd.DataFrame, symbol: str, live_guard: bool = False) 
         # Resample to checkpoints
         for cp_str in CHECKPOINT_TIMES:
             cp_h, cp_m = int(cp_str.split(":")[0]), int(cp_str.split(":")[1])
-            checkpoint_ts = pd.Timestamp(
-                year=trade_date.year,
-                month=trade_date.month,
-                day=trade_date.day,
-                hour=cp_h,
-                minute=cp_m,
-            )
-            if live_guard and checkpoint_ts > latest_actual_ts:
-                continue
-
             # Window: bars where time <= checkpoint (up to and including)
             cp_mask = day_df["Timestamp"].dt.strftime("%H:%M") <= cp_str
             if not cp_mask.any():
@@ -269,39 +254,7 @@ def build_sessions(df_rth: pd.DataFrame, symbol: str, live_guard: bool = False) 
             # Two-sided trade flag: did price visit both sides of VWAP today?
             above_vwap = (window["High"] > session_vwap).any()
             below_vwap = (window["Low"]  < session_vwap).any()
-            two_sided_raw = int(above_vwap and below_vwap)
-
-            # same_side_vwap_minutes: consecutive minutes price has stayed on
-            # one side of VWAP counting from the most recent bar backward.
-            # Used by the IB/VWAP acceptance override in the supervisor.
-            same_side_vwap_minutes = 0
-            if len(window) >= 1:
-                # Determine current side
-                current_above = window["Close"].iloc[-1] > session_vwap
-                count = 0
-                for _, bar in window.iloc[::-1].iterrows():
-                    bar_above = bar["Close"] > session_vwap
-                    if bar_above == current_above:
-                        count += 1
-                    else:
-                        break
-                same_side_vwap_minutes = count  # 1-min bars = minutes
-
-            # IB acceptance override decay: clear two_sided_trade_flag when
-            # price has sustained one-sided acceptance post-IB breakout.
-            # Conditions: IB clearly broken (ext >= 0.85 ATR-normalised width),
-            # price has been same-side VWAP for >= 15 consecutive minutes,
-            # and close is > 1.5 ATR above/below VWAP.
-            # This prevents the flag from staying sticky the entire session
-            # after a clean breakout, which permanently blocks expansion lanes.
-            ib_clear_threshold = thr.get("ib_strong", 0.85)
-            if (two_sided_raw == 1
-                    and ib_extension_pct >= ib_clear_threshold
-                    and same_side_vwap_minutes >= 15
-                    and abs(close_vs_vwap_atr) >= 1.50):
-                two_sided_trade_flag = 0  # override — breakout acceptance confirmed
-            else:
-                two_sided_trade_flag = two_sided_raw
+            two_sided_trade_flag = int(above_vwap and below_vwap)
 
             # Returned to open flag
             returned_to_open_flag = int(
@@ -350,8 +303,6 @@ def build_sessions(df_rth: pd.DataFrame, symbol: str, live_guard: bool = False) 
                 "de_recent_3bar":               round(de_recent, 4),
                 "de_effective":                 round(de_effective, 4),
                 "ib_extension_pct":             round(ib_extension_pct, 4),
-                "ib_high_so_far":                round(ib_high_sofar, 4),
-                "ib_low_so_far":                 round(ib_low_sofar, 4),
                 "ib_width_so_far":              round(ib_width_sofar, 4),
                 "ib_width_atr":                 round(ib_width_atr, 4),
                 "atr_5m":                       round(atr, 4),
@@ -360,7 +311,6 @@ def build_sessions(df_rth: pd.DataFrame, symbol: str, live_guard: bool = False) 
                 "rvol_vs_20d":                  np.nan,  # filled post-process
                 "daily_volume":                 daily_volume_so_far,  # used for rvol calc
                 "two_sided_trade_flag":         two_sided_trade_flag,
-                "same_side_vwap_minutes":       same_side_vwap_minutes,
                 "returned_to_open_flag":        returned_to_open_flag,
                 "value_break_accept_flag":      value_break_accept_flag,
                 "open_in_pd_value_flag":        0,  # filled post-process from ValueArea file
@@ -368,8 +318,6 @@ def build_sessions(df_rth: pd.DataFrame, symbol: str, live_guard: bool = False) 
                 "close_in_pd_value_flag":       0,  # filled post-process from ValueArea file
                 "close_in_on_value_flag":       0,  # filled post-process from ValueArea file
                 "inside_value_score":           0,  # filled post-process from ValueArea file
-                "pd_vah":                       0.0,  # filled post-process from ValueArea file
-                "pd_val":                       0.0,  # filled post-process from ValueArea file
                 "prior_day_type":               "",  # filled post-process
                 "on_type":                      "",  # stub — requires ON data
                 "official_regime_label":        official_regime,
@@ -522,7 +470,7 @@ def load_value_area(symbol: str) -> pd.DataFrame:
         va = va.sort_values("Date").drop_duplicates(subset="Date", keep="last")
         va = va.set_index("Date")
         log.info(f"[{symbol}] Value area loaded: {len(va)} days "
-                 f"({va.index.min()} to {va.index.max()})")
+                 f"({va.index.min()} → {va.index.max()})")
         return va
     except Exception as e:
         log.warning(f"[{symbol}] Could not load value area file: {e}")
@@ -646,19 +594,11 @@ def compute_rolling_metrics(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
             on_l = float(va_row["ONLow"])
             return int(on_l <= row["last_price"] <= on_h)
 
-        def prior_day_value(row, col_name):
-            va_row = get_va_row(row["_date"])
-            if va_row is None or col_name not in va_row:
-                return 0.0
-            return float(va_row[col_name])
-
         log.info(f"[{symbol}] Computing value area flags across {len(df)} checkpoint rows...")
         df["open_in_pd_value_flag"]  = df.apply(open_in_pd_value,  axis=1)
         df["close_in_pd_value_flag"] = df.apply(close_in_pd_value, axis=1)
         df["open_in_on_value_flag"]  = df.apply(open_in_on_value,  axis=1)
         df["close_in_on_value_flag"] = df.apply(close_in_on_value, axis=1)
-        df["pd_vah"] = df.apply(lambda row: prior_day_value(row, "VAH"), axis=1).round(4)
-        df["pd_val"] = df.apply(lambda row: prior_day_value(row, "VAL"), axis=1).round(4)
 
         # inside_value_score: 0-4 composite (how many value conditions are true)
         df["inside_value_score"] = (
@@ -672,11 +612,6 @@ def compute_rolling_metrics(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     else:
         log.info(f"[{symbol}] Value area file unavailable — flags remain 0. "
                  f"Pipeline will continue without them.")
-
-    for col in ["pd_vah", "pd_val", "ib_high_so_far", "ib_low_so_far"]:
-        if col not in df.columns:
-            df[col] = 0.0
-        df[col] = df[col].fillna(0.0)
 
     df["trade_date"] = df["trade_date"].dt.strftime("%Y-%m-%d")
     return df
@@ -769,7 +704,7 @@ def process_symbol_live(symbol: str):
             return
     # else: first run, process all
 
-    df_new = build_sessions(df_rth, symbol, live_guard=True)
+    df_new = build_sessions(df_rth, symbol)
 
     if df_new.empty:
         return

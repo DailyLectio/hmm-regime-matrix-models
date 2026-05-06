@@ -666,7 +666,6 @@ def classify_v3c_candidate(
     developing_score = _safe_float(macro_row.get("developing_initiative_score", 0.0))
     initiative_direction = _upper(macro_row.get("initiative_direction", "NONE"), "NONE")
     same_side_vwap_minutes = _safe_float(macro_row.get("same_side_vwap_minutes", 0.0))
-    same_side_vwap_minutes = _safe_float(macro_row.get("same_side_vwap_minutes", 0.0))
     late_extension_penalty = _safe_float(macro_row.get("late_extension_penalty", 0.0))
     state_prob = _safe_float(macro_row.get("StateProb", np.nan), np.nan)
     state_margin = _safe_float(macro_row.get("StateMargin", np.nan), np.nan)
@@ -738,35 +737,6 @@ def classify_v3c_candidate(
 
     conflict = int(_clip(conflict, 0, 100))
 
-    # IB/VWAP ACCEPTANCE OVERRIDE — fires when price has confirmed expansion
-    # through IB extension + sustained same-side VWAP acceptance even when
-    # the Macro layer is still bracket/rotation-biased. Runs before the stale
-    # check intentionally: a stale-data scenario is unlikely to also show
-    # 15+ minutes of same-side VWAP acceptance with clear IB extension.
-    # All five conditions are required to prevent false triggers on spikes.
-    # Conflict ceiling is 54 (below the hard-block at 55) to allow
-    # single-source conflict from HMM/VWAP disagreement to pass.
-    _ib_ext_strong = th.strong_ib_ext      # NQ: 1.10, ES: 1.25 (already defined)
-    _ib_override_eligible = (
-        ib_ext >= _ib_ext_strong
-        and abs(close_vs_vwap) >= 1.25
-        and abs(net_move) >= 2.0
-        and returned_open == 0
-        and same_side_vwap_minutes >= 15
-        and conflict < 55
-        and direction in {"LONG", "SHORT"}
-        and not stale_flag
-    )
-    if _ib_override_eligible:
-        _ib_confidence = int(_clip(78 + min(10, ib_ext * 8), 72, 90))
-        return {
-            "candidate": "TREND_EXPANSION",
-            "direction": direction,
-            "confidence": _ib_confidence,
-            "conflict": conflict,
-            "reason": "IB_BREAKOUT_VWAP_ACCEPTANCE_OVERRIDE",
-        }
-
     if stale_flag:
         return {
             "candidate": "TRANSITION",
@@ -827,20 +797,6 @@ def classify_v3c_candidate(
         confidence = 60 + int(min(18, (developing_score - BRACKET_INITIATIVE_SCORE_MIN) * 0.7))
         if hmm_trending and hmm_vwap_agrees:
             confidence += 4
-        # Promote to TREND_EXPANSION when bracket has clearly broken:
-        # high initiative score + IB extension confirmed + strong VWAP separation.
-        if (developing_score >= 70
-                and ib_ext >= th.expansion_ib_ext
-                and abs(close_vs_vwap) >= th.vwap_confirm_atr
-                and abs(net_move) >= th.net_move_confirm_atr
-                and same_side_vwap_minutes >= 10):
-            return {
-                "candidate": "TREND_EXPANSION",
-                "direction": initiative_direction,
-                "confidence": int(_clip(confidence + 8, 68, 88)),
-                "conflict": conflict,
-                "reason": "BRACKET_IB_BREAK_EXPANSION_PROMOTED",
-            }
         return {
             "candidate": "TREND_COMPRESSION",
             "direction": initiative_direction,
@@ -867,17 +823,6 @@ def classify_v3c_candidate(
             and ib_ext >= th.expansion_ib_ext
             and abs_velocity >= th.expansion_velocity
         ):
-            # If IB extension also exceeds the strong threshold, promote to
-            # expansion — the escape hatch from Transition should be able to
-            # wake the Expansion bot when price evidence is unambiguous.
-            if ib_ext >= th.strong_ib_ext:
-                return {
-                    "candidate": "TREND_EXPANSION",
-                    "direction": direction,
-                    "confidence": 72,
-                    "conflict": conflict,
-                    "reason": "TRANSITION_IB_CONFIRMED_EXPANSION",
-                }
             return {
                 "candidate": "TREND_COMPRESSION",
                 "direction": direction,

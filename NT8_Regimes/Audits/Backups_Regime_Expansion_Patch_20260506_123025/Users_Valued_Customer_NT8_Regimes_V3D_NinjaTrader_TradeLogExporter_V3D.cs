@@ -61,17 +61,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             Order = 2, GroupName = "V3D Trade Log")]
         public string ModelVersion { get; set; }
 
-        [NinjaScriptProperty]
-        [Display(
-            Name = "Leader Symbol Override",
-            Description = "Optional. If the HUD registers under a key other than 'NQ'/'ES' " +
-                          "(e.g. 'NQ JUN26'), enter it here. Leave blank to use auto-detection.",
-            Order = 3, GroupName = "V3D Trade Log")]
-        public string LeaderSymbolOverride { get; set; }
         // ---------------------------------------------------------------
-        private const string BASE_PATH =
-            @"C:\Users\Valued Customer\NT8_Regimes\V3D\TradeLog\";
-        private const string LOG_FILE  = "V3D_TradeLog.csv";
+        // Constants
+        // ---------------------------------------------------------------
+        private const string ROOT_PATH =
+            @"C:\Users\Valued Customer\NT8_Regimes\";
         private const string COLUMN_HEADER =
             "trade_date,entry_time,exit_time,symbol,bot_name,model_version," +
             "direction,contracts,entry_price,exit_price," +
@@ -86,7 +80,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         // ---------------------------------------------------------------
         // State
         // ---------------------------------------------------------------
-        private string logPath       = "";
         private string leaderSymbol  = "";
         private readonly HashSet<string> seenExecutionIds = new HashSet<string>();
 
@@ -125,16 +118,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.DataLoaded)
             {
-                // If operator provided an explicit override key (e.g. "NQ JUN26"),
-                // use it directly. Otherwise auto-detect from instrument name.
-                leaderSymbol = !string.IsNullOrWhiteSpace(LeaderSymbolOverride)
-                    ? LeaderSymbolOverride.Trim()
-                    : GetLeaderSymbol(Instrument.MasterInstrument.Name.ToUpper());
+                leaderSymbol = GetLeaderSymbol(
+                    Instrument.MasterInstrument.Name.ToUpper());
 
-                string dir = BASE_PATH;
-                if (!Directory.Exists(dir))
+                string startupLogPath = GetLogPathForModel(ModelVersion);
+                string startupDir = Path.GetDirectoryName(startupLogPath);
+                if (!Directory.Exists(startupDir))
                 {
-                    try { Directory.CreateDirectory(dir); }
+                    try { Directory.CreateDirectory(startupDir); }
                     catch (Exception ex)
                     {
                         Print("TradeLogExporter: Cannot create directory — " + ex.Message);
@@ -142,11 +133,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                 }
 
-                logPath = Path.Combine(dir, LOG_FILE);
-                EnsureHeader();
+                EnsureHeader(startupLogPath);
 
                 Print("TradeLogExporter [" + leaderSymbol + " / " + BotName +
-                      "]: Ready. Log: " + logPath);
+                      "]: Ready. Log: " + startupLogPath);
 
                 lock (Account.All)
                 {
@@ -178,8 +168,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 execution.Instrument.MasterInstrument.Name.ToUpper() !=
                     Instrument.MasterInstrument.Name.ToUpper())
                 return;
-
-            if (string.IsNullOrEmpty(logPath)) return;
 
             try
             {
@@ -300,13 +288,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             string tradeDate = exitTime.ToString("yyyy-MM-dd");
             string exitTimeStr = exitTime.ToString("yyyy-MM-dd HH:mm:ss");
 
+            string accountName = execution.Account == null ? "Unknown" : execution.Account.Name;
+            string resolvedModel = ResolveModelForAccount(accountName);
+
             string line = string.Join(",",
                 tradeDate,
                 pendingEntryTime,
                 exitTimeStr,
                 leaderSymbol,
                 BotName,
-                ModelVersion,
+                resolvedModel,
                 pendingDirection,
                 pendingContracts.ToString(),
                 pendingEntryPrice.ToString("F2"),
@@ -331,11 +322,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 pendingEntrySizePct,
                 pendingEntryVelocity,
                 pendingEntryReason,
-                execution.Account == null ? "Unknown" : execution.Account.Name,
+                accountName,
                 Instrument.FullName
             );
 
-            AppendLine(line);
+            string rowLogPath = GetLogPathForModel(resolvedModel);
+            EnsureHeader(rowLogPath);
+            AppendLine(rowLogPath, line);
 
             Print(string.Format(
                 "TradeLogExporter [{0}/{1}]: {2} {3} {4}@{5:F2}→{6:F2} | " +
@@ -353,71 +346,25 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             try
             {
-                // Access the static HUD instance dictionary.
+                // Access the static HUD instance dictionary
                 // RegimeMatrixHUD_V3D.InstancesV3D is a Dictionary<string, RegimeMatrixHUD_V3D>
-                // The HUD registers itself under the key it derives from its own chart instrument.
-                // That key may be "NQ", "NQ JUN26", or the full Instrument.FullName depending on
-                // how RegimeMatrixHUD_V3D.OnStateChange populates InstancesV3D.
-                // We try multiple candidate keys so a key-format mismatch does not silently
-                // produce UNAVAILABLE on every fill.
                 var hudType = Type.GetType(
                     "NinjaTrader.NinjaScript.Indicators.RegimeMatrixHUD_V3D");
-                if (hudType == null)
-                {
-                    Print("TradeLogExporter [" + leaderSymbol + "]: HUD type not found — RegimeMatrixHUD_V3D not compiled/loaded.");
-                    return null;
-                }
+                if (hudType == null) return null;
 
                 var instancesProp = hudType.GetProperty("InstancesV3D",
                     System.Reflection.BindingFlags.Public |
                     System.Reflection.BindingFlags.Static);
-                if (instancesProp == null)
-                {
-                    Print("TradeLogExporter [" + leaderSymbol + "]: InstancesV3D property not found on HUD type.");
-                    return null;
-                }
+                if (instancesProp == null) return null;
 
                 var instances = instancesProp.GetValue(null) as
                     System.Collections.IDictionary;
-                if (instances == null)
-                {
-                    Print("TradeLogExporter [" + leaderSymbol + "]: InstancesV3D is null.");
+                if (instances == null || !instances.Contains(leaderSymbol))
                     return null;
-                }
 
-                // Try candidate keys in priority order:
-                //   1. leaderSymbol as-is ("NQ" or "ES")
-                //   2. Instrument.FullName ("NQ JUN26")
-                //   3. Instrument.MasterInstrument.Name.ToUpper() (raw NT8 name)
-                string[] candidateKeys = new string[]
-                {
-                    leaderSymbol,
-                    Instrument.FullName,
-                    Instrument.MasterInstrument.Name.ToUpper(),
-                };
-
-                foreach (string key in candidateKeys)
-                {
-                    if (!string.IsNullOrEmpty(key) && instances.Contains(key))
-                        return instances[key];
-                }
-
-                // No key matched — emit a diagnostic listing what IS registered
-                // so the operator can identify the correct key immediately.
-                var registeredKeys = new System.Collections.Generic.List<string>();
-                foreach (var k in instances.Keys)
-                    registeredKeys.Add(k.ToString());
-                Print("TradeLogExporter [" + leaderSymbol + "]: No HUD instance found. " +
-                      "Tried: [" + string.Join(", ", candidateKeys) + "]. " +
-                      "Registered keys: [" + string.Join(", ", registeredKeys) + "]. " +
-                      "Add a matching LeaderSymbolOverride parameter or fix HUD registration key.");
-                return null;
+                return instances[leaderSymbol];
             }
-            catch (Exception ex)
-            {
-                Print("TradeLogExporter [" + leaderSymbol + "]: GetHud exception: " + ex.Message);
-                return null;
-            }
+            catch { return null; }
         }
 
         private int GetBotSizePct(dynamic hud)
@@ -492,14 +439,32 @@ namespace NinjaTrader.NinjaScript.Indicators
             return o == null ? "" : o.ToString();
         }
 
-        private void EnsureHeader()
+        private static string ResolveModelForAccount(string accountName)
         {
-            if (File.Exists(logPath)) return;
+            string account = (accountName ?? "").ToUpperInvariant();
+            if (account.StartsWith("SIMV3C-NQ-")) return "V3C";
+            if (account.StartsWith("SIMV3D-NQ-")) return "V3D";
+            return "V3D";
+        }
+
+        private static string GetLogPathForModel(string model)
+        {
+            string safeModel = model == "V3C" ? "V3C" : "V3D";
+            string dir = Path.Combine(ROOT_PATH, safeModel, "TradeLog");
+            return Path.Combine(dir, safeModel + "_TradeLog.csv");
+        }
+
+        private void EnsureHeader(string path)
+        {
+            if (File.Exists(path)) return;
             try
             {
-                using (var sw = new StreamWriter(logPath, false))
+                string dir = Path.GetDirectoryName(path);
+                if (!Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+                using (var sw = new StreamWriter(path, false))
                     sw.WriteLine(COLUMN_HEADER);
-                Print("TradeLogExporter: Created " + logPath);
+                Print("TradeLogExporter: Created " + path);
             }
             catch (Exception ex)
             {
@@ -507,11 +472,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        private void AppendLine(string line)
+        private void AppendLine(string path, string line)
         {
             try
             {
-                using (var sw = new StreamWriter(logPath, true))
+                using (var sw = new StreamWriter(path, true))
                     sw.WriteLine(line);
             }
             catch (Exception ex)
@@ -526,55 +491,40 @@ namespace NinjaTrader.NinjaScript.Indicators
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-	public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
-	{
-		private TradeLogExporter_V3D[] cacheTradeLogExporter_V3D;
-		public TradeLogExporter_V3D TradeLogExporter_V3D(string botName, string modelVersion, string leaderSymbolOverride)
-		{
-			return TradeLogExporter_V3D(Input, botName, modelVersion, leaderSymbolOverride);
-		}
-
-		public TradeLogExporter_V3D TradeLogExporter_V3D(ISeries<double> input, string botName, string modelVersion, string leaderSymbolOverride)
-		{
-			if (cacheTradeLogExporter_V3D != null)
-				for (int idx = 0; idx < cacheTradeLogExporter_V3D.Length; idx++)
-					if (cacheTradeLogExporter_V3D[idx] != null && cacheTradeLogExporter_V3D[idx].BotName == botName && cacheTradeLogExporter_V3D[idx].ModelVersion == modelVersion && cacheTradeLogExporter_V3D[idx].LeaderSymbolOverride == leaderSymbolOverride && cacheTradeLogExporter_V3D[idx].EqualsInput(input))
-						return cacheTradeLogExporter_V3D[idx];
-			return CacheIndicator<TradeLogExporter_V3D>(new TradeLogExporter_V3D(){ BotName = botName, ModelVersion = modelVersion, LeaderSymbolOverride = leaderSymbolOverride }, input, ref cacheTradeLogExporter_V3D);
-		}
-	}
-}
-
-namespace NinjaTrader.NinjaScript.MarketAnalyzerColumns
-{
-	public partial class MarketAnalyzerColumn : MarketAnalyzerColumnBase
-	{
-		public Indicators.TradeLogExporter_V3D TradeLogExporter_V3D(string botName, string modelVersion, string leaderSymbolOverride)
-		{
-			return indicator.TradeLogExporter_V3D(Input, botName, modelVersion, leaderSymbolOverride);
-		}
-
-		public Indicators.TradeLogExporter_V3D TradeLogExporter_V3D(ISeries<double> input , string botName, string modelVersion, string leaderSymbolOverride)
-		{
-			return indicator.TradeLogExporter_V3D(input, botName, modelVersion, leaderSymbolOverride);
-		}
-	}
+    public partial class Indicator : NinjaTrader.Gui.NinjaScript.IndicatorRenderBase
+    {
+        private TradeLogExporter_V3D[] cacheTradeLogExporter_V3D;
+        public TradeLogExporter_V3D TradeLogExporter_V3D()
+        {
+            return TradeLogExporter_V3D(Input);
+        }
+        public TradeLogExporter_V3D TradeLogExporter_V3D(ISeries<double> input)
+        {
+            if (cacheTradeLogExporter_V3D != null)
+                for (int idx = 0; idx < cacheTradeLogExporter_V3D.Length; idx++)
+                    if (cacheTradeLogExporter_V3D[idx] != null &&
+                        cacheTradeLogExporter_V3D[idx].EqualsInput(input))
+                        return cacheTradeLogExporter_V3D[idx];
+            return CacheIndicator<TradeLogExporter_V3D>(
+                new TradeLogExporter_V3D(), input, ref cacheTradeLogExporter_V3D);
+        }
+    }
 }
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-	public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
-	{
-		public Indicators.TradeLogExporter_V3D TradeLogExporter_V3D(string botName, string modelVersion, string leaderSymbolOverride)
-		{
-			return indicator.TradeLogExporter_V3D(Input, botName, modelVersion, leaderSymbolOverride);
-		}
-
-		public Indicators.TradeLogExporter_V3D TradeLogExporter_V3D(ISeries<double> input , string botName, string modelVersion, string leaderSymbolOverride)
-		{
-			return indicator.TradeLogExporter_V3D(input, botName, modelVersion, leaderSymbolOverride);
-		}
-	}
+    public partial class Strategy : NinjaTrader.Gui.NinjaScript.StrategyRenderBase
+    {
+        public Indicators.TradeLogExporter_V3D TradeLogExporter_V3D()
+        {
+            return indicator.TradeLogExporter_V3D(Input);
+        }
+        public Indicators.TradeLogExporter_V3D TradeLogExporter_V3D(
+            ISeries<double> input)
+        {
+            return indicator.TradeLogExporter_V3D(input);
+        }
+    }
 }
 
 #endregion

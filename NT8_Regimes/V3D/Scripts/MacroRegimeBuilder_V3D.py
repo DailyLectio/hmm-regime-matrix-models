@@ -269,7 +269,39 @@ def build_sessions(df_rth: pd.DataFrame, symbol: str, live_guard: bool = False) 
             # Two-sided trade flag: did price visit both sides of VWAP today?
             above_vwap = (window["High"] > session_vwap).any()
             below_vwap = (window["Low"]  < session_vwap).any()
-            two_sided_trade_flag = int(above_vwap and below_vwap)
+            two_sided_raw = int(above_vwap and below_vwap)
+
+            # same_side_vwap_minutes: consecutive minutes price has stayed on
+            # one side of VWAP counting from the most recent bar backward.
+            # Used by the IB/VWAP acceptance override in the supervisor.
+            same_side_vwap_minutes = 0
+            if len(window) >= 1:
+                # Determine current side
+                current_above = window["Close"].iloc[-1] > session_vwap
+                count = 0
+                for _, bar in window.iloc[::-1].iterrows():
+                    bar_above = bar["Close"] > session_vwap
+                    if bar_above == current_above:
+                        count += 1
+                    else:
+                        break
+                same_side_vwap_minutes = count  # 1-min bars = minutes
+
+            # IB acceptance override decay: clear two_sided_trade_flag when
+            # price has sustained one-sided acceptance post-IB breakout.
+            # Conditions: IB clearly broken (ext >= 0.85 ATR-normalised width),
+            # price has been same-side VWAP for >= 15 consecutive minutes,
+            # and close is > 1.5 ATR above/below VWAP.
+            # This prevents the flag from staying sticky the entire session
+            # after a clean breakout, which permanently blocks expansion lanes.
+            ib_clear_threshold = thr.get("ib_strong", 0.85)
+            if (two_sided_raw == 1
+                    and ib_extension_pct >= ib_clear_threshold
+                    and same_side_vwap_minutes >= 15
+                    and abs(close_vs_vwap_atr) >= 1.50):
+                two_sided_trade_flag = 0  # override — breakout acceptance confirmed
+            else:
+                two_sided_trade_flag = two_sided_raw
 
             # Returned to open flag
             returned_to_open_flag = int(
@@ -328,6 +360,7 @@ def build_sessions(df_rth: pd.DataFrame, symbol: str, live_guard: bool = False) 
                 "rvol_vs_20d":                  np.nan,  # filled post-process
                 "daily_volume":                 daily_volume_so_far,  # used for rvol calc
                 "two_sided_trade_flag":         two_sided_trade_flag,
+                "same_side_vwap_minutes":       same_side_vwap_minutes,
                 "returned_to_open_flag":        returned_to_open_flag,
                 "value_break_accept_flag":      value_break_accept_flag,
                 "open_in_pd_value_flag":        0,  # filled post-process from ValueArea file

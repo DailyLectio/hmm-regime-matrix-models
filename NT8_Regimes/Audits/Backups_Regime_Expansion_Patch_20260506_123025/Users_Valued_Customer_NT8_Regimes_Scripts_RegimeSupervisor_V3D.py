@@ -588,31 +588,6 @@ def classify_final_regime(
     # labels are session-boundary artifacts; NQ can still use HMM direction.
     direction = determine_direction(row, symbol)
     
-    # IB/VWAP ACCEPTANCE OVERRIDE — fires when price has confirmed expansion
-    # through IB extension + sustained same-side VWAP acceptance even when
-    # the HMM or Macro layers are lagging. All conditions are required.
-    # This override runs BEFORE the conflict check so that a single-source
-    # conflict (Macro=TREND, HMM=Balance → score=0.40) does not block
-    # expansion on a day where price has clearly left the IB range.
-    # Conflict must still be below 0.60 — genuine multi-source conflict blocks.
-    same_side_vwap_min = row.get("same_side_vwap_minutes", 0)
-    close_vs_vwap_atr_val = abs(row.get("close_vs_vwap_atr", 0.0))
-    net_move_atr_val = abs(row.get("net_move_since_open_atr", 0.0))
-    returned_open = int(row.get("returned_to_open_flag", 1))
-
-    ib_breakout_override = (
-        ib_ext >= THRESHOLDS[symbol]["ib_strong"]          # NQ: 1.00, ES: 0.85
-        and close_vs_vwap_atr_val >= 1.25
-        and net_move_atr_val >= 2.0
-        and returned_open == 0
-        and same_side_vwap_min >= 10
-        and conflict_score < 0.60
-        and direction != "NEUTRAL"
-    )
-    if ib_breakout_override:
-        confidence = int(min(85, 70 + ib_ext * 10))
-        return "TREND_EXPANSION", direction, confidence, "IB_BREAKOUT_VWAP_ACCEPTANCE_OVERRIDE"
-
     # PRIORITY 1: TRANSITION (danger override)
     if conflict_score >= CONFLICT_THRESHOLD:
         return "TRANSITION", "NEUTRAL", 0, "HIGH_CONFLICT"
@@ -629,13 +604,6 @@ def classify_final_regime(
         )
         if transition_trend_confirmed:
             confidence = int(kalman_score * 0.65)
-            # If IB extension also exceeds the strong threshold, promote to
-            # expansion rather than capping at compression. This ensures the
-            # escape hatch from Transition can actually wake the Expansion bot
-            # when price evidence is unambiguous (not just velocity alone).
-            if ib_ext >= THRESHOLDS[symbol]["ib_strong"]:
-                confidence = int(kalman_score * 0.80)
-                return "TREND_EXPANSION", direction, confidence, "TRANSITION_IB_CONFIRMED_EXPANSION"
             return "TREND_COMPRESSION", direction, confidence, "TRANSITION_MACRO_VELOCITY_IB_CONFIRMED"
         return "TRANSITION", "NEUTRAL", 0, "HMM_TRANSITION_TREND_BLOCKED"
     
@@ -1280,7 +1248,6 @@ def process_symbol(
             "PDVAH": round(clean_number(row.get("pd_vah", 0.0)), 4),
             "PDVAL": round(clean_number(row.get("pd_val", 0.0)), 4),
             "TwoSidedFlag": int(clean_number(row.get("two_sided_trade_flag", 0), 0)),
-            "SameSideVwapMinutes": int(clean_number(row.get("same_side_vwap_minutes", 0), 0)),
             
             # Velocity signals
             "Velocity3P_ATR": round(row.get("velocity_3cp_atr", 0.0), 4),
