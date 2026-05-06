@@ -1,0 +1,1 @@
+trade_date,entry_time,exit_time,model_version,account,strategy_name,bot_name,ab_mode,symbol,instrument,direction,contracts,entry_price,exit_price,gross_pnl,net_pnl,ticks,win_loss,exit_reason,initial_stop_price,initial_stop_distance,export_timestamp
