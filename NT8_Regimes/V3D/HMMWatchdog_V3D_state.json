@@ -21,9 +21,9 @@
   "NQ_last_fit_5m_ts": "2026-05-05T16:00:00",
   "ES_last_fit_rth_rows": 294626,
   "ES_last_fit_5m_ts": "2026-05-05T16:00:00",
-  "NQ_last_seen_raw_rows": 1028408,
+  "NQ_last_seen_raw_rows": 1028880,
   "NQ_last_seen_rth_rows": 294112,
-  "ES_last_seen_raw_rows": 1026404,
+  "ES_last_seen_raw_rows": 1026923,
   "ES_last_seen_rth_rows": 294626,
   "NQ_label_diagnostics": {
     "ambiguous_fit": false,
