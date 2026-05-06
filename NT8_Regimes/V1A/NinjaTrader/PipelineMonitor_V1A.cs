@@ -4,6 +4,7 @@
 
 #region Using declarations
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.IO;
@@ -31,14 +32,32 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Footprint History Start Date", Description = "Informational display only.", GroupName = "Pipeline Monitor", Order = 2)]
         public string FootprintHistoryStartDate { get; set; } = "2024-06-01";
 
+        [NinjaScriptProperty]
+        [Display(Name = "Write HUD History CSV", Description = "Append one V1A/V1B HUD telemetry row per chart bar.", GroupName = "History Export", Order = 0)]
+        public bool WriteHudHistoryCsv { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "HUD History Folder", Description = "Blank = V1A\\History\\HUD_Reads.", GroupName = "History Export", Order = 1)]
+        public string HudHistoryFolder { get; set; } = "";
+
         private readonly SimpleFont panelFont = new SimpleFont("Consolas", 12);
         private DateTime lastCheck = DateTime.MinValue;
+        private int lastHistoryWriteBar = -1;
 
         private string liveStatus = "CHECKING";
         private string valueAreaStatus = "CHECKING";
         private string footprintStatus = "CHECKING";
         private string biasStatus = "CHECKING";
         private string tradeLogStatus = "CHECKING";
+        private string playbookStatus = "N/A";
+        private string macroHudStatus = "N/A";
+        private string hmmHudStatus = "N/A";
+        private string v3cFinalRegime = "UNKNOWN";
+        private string v3cFinalDirection = "UNKNOWN";
+        private string v3cSnapshotTimestamp = "";
+        private string v3dFinalRegime = "UNKNOWN";
+        private string v3dFinalDirection = "UNKNOWN";
+        private string v3dTimestampET = "";
 
         private Brush liveBrush = Brushes.Gray;
         private Brush valueAreaBrush = Brushes.Gray;
@@ -72,6 +91,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 RefreshStatus();
             }
 
+            WriteHudHistoryRow();
             DrawPanel();
         }
 
@@ -139,11 +159,17 @@ namespace NinjaTrader.NinjaScript.Indicators
                 string bias = HUDMessenger.CurrentDailyBias;
                 biasStatus = string.IsNullOrWhiteSpace(bias) ? "N/A" : bias.Trim();
                 biasBrush = biasStatus == "N/A" ? Brushes.Gray : Brushes.DeepSkyBlue;
+                playbookStatus = string.IsNullOrWhiteSpace(HUDMessenger.CurrentPlaybook) ? "N/A" : HUDMessenger.CurrentPlaybook.Trim();
+                macroHudStatus = string.IsNullOrWhiteSpace(HUDMessenger.CurrentMacroRegime) ? "N/A" : HUDMessenger.CurrentMacroRegime.Trim();
+                hmmHudStatus = string.IsNullOrWhiteSpace(HUDMessenger.CurrentHMMRegime) ? "N/A" : HUDMessenger.CurrentHMMRegime.Trim();
             }
             catch
             {
                 biasStatus = "N/A";
                 biasBrush = Brushes.Gray;
+                playbookStatus = "N/A";
+                macroHudStatus = "N/A";
+                hmmHudStatus = "N/A";
             }
 
             DateTime tradeLogDate = LatestFileDate(tradeLogDir, "*.csv");
@@ -170,6 +196,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                            footprintBrush == Brushes.Gold || tradeLogBrush == Brushes.Gold
                            ? Brushes.DarkGoldenrod
                            : Brushes.DarkGreen;
+
+            RefreshCrossModelRegimes();
         }
 
         private void DrawPanel()
@@ -180,6 +208,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             sb.AppendLine(StatusDot(valueAreaBrush) + " VALUE AREA   " + valueAreaStatus);
             sb.AppendLine(StatusDot(footprintBrush) + " FOOTPRINT    " + footprintStatus);
             sb.AppendLine(StatusDot(biasBrush) + " BIAS         " + biasStatus);
+            sb.AppendLine("[I] V1A/B HUD   PB:" + playbookStatus + " M:" + macroHudStatus + " H:" + hmmHudStatus);
+            sb.AppendLine("[I] V3C/V3D     " + v3cFinalRegime + " / " + v3dFinalRegime);
             sb.AppendLine(StatusDot(tradeLogBrush) + " TRADE LOG    " + tradeLogStatus);
 
             Draw.TextFixed(this, "PipelineMonitorV1A_Status", sb.ToString(), TextPosition.TopLeft,
@@ -281,6 +311,211 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             return latest;
+        }
+
+        private void RefreshCrossModelRegimes()
+        {
+            string sym = GetLeaderSymbol(Instrument.MasterInstrument.Name.ToUpper());
+
+            string v3cPath = Path.Combine(DataFolderPath, "V3C", sym + "_Regimes_V3C_Latest.csv");
+            var v3c = ReadLastCsvRow(v3cPath);
+            v3cFinalRegime = Get(v3c, "FinalRegime", "UNKNOWN");
+            v3cFinalDirection = Get(v3c, "FinalDirection", "UNKNOWN");
+            v3cSnapshotTimestamp = Get(v3c, "SnapshotTimestamp", "");
+
+            string v3dPath = Path.Combine(DataFolderPath, "V3D", sym + "_RegimeMatrix_Latest.csv");
+            var v3d = ReadLastCsvRow(v3dPath);
+            v3dFinalRegime = Get(v3d, "FinalRegime", "UNKNOWN");
+            v3dFinalDirection = Get(v3d, "FinalDirection", "UNKNOWN");
+            v3dTimestampET = Get(v3d, "TimestampET", "");
+        }
+
+        private void WriteHudHistoryRow()
+        {
+            if (!WriteHudHistoryCsv || CurrentBar < 1 || lastHistoryWriteBar == CurrentBar)
+                return;
+
+            lastHistoryWriteBar = CurrentBar;
+
+            try
+            {
+                string sym = GetLeaderSymbol(Instrument.MasterInstrument.Name.ToUpper());
+                string folder = string.IsNullOrWhiteSpace(HudHistoryFolder)
+                    ? Path.Combine(DataFolderPath, "V1A", "History", "HUD_Reads")
+                    : HudHistoryFolder;
+                Directory.CreateDirectory(folder);
+
+                string path = Path.Combine(folder, sym + "_V1AB_HUD_ReadHistory_" + Time[0].ToString("yyyyMMdd") + ".csv");
+                bool exists = File.Exists(path);
+                if (!exists)
+                {
+                    File.AppendAllText(path,
+                        "HudReadTimestampLocal,BarTimestamp,CurrentBar,ChartSymbol,LeaderSymbol,V1ABOperatingModel,V1ABDailyBias,V1ABPlaybook,V1ABMacroRegime,V1ABHMMRegime,LiveFeedStatus,ValueAreaStatus,FootprintStatus,TradeLogStatus,ScannerABSFresh,ScannerABSAgeMin,ScannerDDFresh,ScannerDDAgeMin,ScannerTFFresh,ScannerTFAgeMin,ScannerDTFresh,ScannerDTAgeMin,ScannerDEIAFresh,ScannerDEIAAgeMin,ScannerEEMDFFresh,ScannerEEMDFAgeMin,V3CFinalRegime,V3CFinalDirection,V3CSnapshotTimestamp,V3DFinalRegime,V3DFinalDirection,V3DTimestampET\n");
+                }
+
+                string line = string.Join(",",
+                    Csv(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")),
+                    Csv(Time[0].ToString("yyyy-MM-dd HH:mm:ss")),
+                    Csv(CurrentBar.ToString()),
+                    Csv(Instrument.MasterInstrument.Name),
+                    Csv(sym),
+                    Csv("V1A/V1B_SELF_GATED_NO_MATRIX_REGIME"),
+                    Csv(biasStatus),
+                    Csv(playbookStatus),
+                    Csv(macroHudStatus),
+                    Csv(hmmHudStatus),
+                    Csv(liveStatus),
+                    Csv(valueAreaStatus),
+                    Csv(footprintStatus),
+                    Csv(tradeLogStatus),
+                    Csv(IsSignalFreshText("Scanner_ABS", 3)),
+                    Csv(SignalAgeText("Scanner_ABS")),
+                    Csv(IsSignalFreshText("Scanner_DD", 3)),
+                    Csv(SignalAgeText("Scanner_DD")),
+                    Csv(IsSignalFreshText("Scanner_TF", 3)),
+                    Csv(SignalAgeText("Scanner_TF")),
+                    Csv(IsSignalFreshText("Scanner_DT", 1)),
+                    Csv(SignalAgeText("Scanner_DT")),
+                    Csv(IsSignalFreshText("Scanner_DEIA", 1)),
+                    Csv(SignalAgeText("Scanner_DEIA")),
+                    Csv(IsSignalFreshText("Scanner_EEMDF", 1)),
+                    Csv(SignalAgeText("Scanner_EEMDF")),
+                    Csv(v3cFinalRegime),
+                    Csv(v3cFinalDirection),
+                    Csv(v3cSnapshotTimestamp),
+                    Csv(v3dFinalRegime),
+                    Csv(v3dFinalDirection),
+                    Csv(v3dTimestampET));
+
+                File.AppendAllText(path, line + "\n");
+            }
+            catch (Exception ex)
+            {
+                Print("PipelineMonitor_V1A HUD history write error: " + ex.Message);
+            }
+        }
+
+        private string IsSignalFreshText(string key, double maxMinutes)
+        {
+            try
+            {
+                return HUDMessengerV1B.IsSignalFresh(key, Time[0], maxMinutes).ToString();
+            }
+            catch
+            {
+                return "False";
+            }
+        }
+
+        private string SignalAgeText(string key)
+        {
+            try
+            {
+                DateTime t;
+                if (!HUDMessengerV1B.SharedSignalMap.TryGetValue(key, out t) || t == DateTime.MinValue)
+                    return "";
+                double age = (Time[0] - t).TotalMinutes;
+                return age.ToString("F2");
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private Dictionary<string, string> ReadLastCsvRow(string path)
+        {
+            var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (!File.Exists(path))
+                return row;
+
+            try
+            {
+                string header = "";
+                string last = "";
+                using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (StreamReader sr = new StreamReader(fs))
+                {
+                    header = sr.ReadLine();
+                    string line;
+                    while ((line = sr.ReadLine()) != null)
+                        if (!string.IsNullOrWhiteSpace(line))
+                            last = line;
+                }
+
+                if (string.IsNullOrWhiteSpace(header) || string.IsNullOrWhiteSpace(last))
+                    return row;
+
+                string[] headers = SplitCsvLine(header);
+                string[] values = SplitCsvLine(last);
+                for (int i = 0; i < headers.Length && i < values.Length; i++)
+                    if (!row.ContainsKey(headers[i].Trim()))
+                        row.Add(headers[i].Trim(), values[i].Trim());
+            }
+            catch
+            {
+            }
+
+            return row;
+        }
+
+        private string[] SplitCsvLine(string line)
+        {
+            System.Collections.Generic.List<string> result = new System.Collections.Generic.List<string>();
+            bool inQuotes = false;
+            string current = "";
+
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (c == '"')
+                {
+                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                    {
+                        current += '"';
+                        i++;
+                    }
+                    else
+                    {
+                        inQuotes = !inQuotes;
+                    }
+                }
+                else if (c == ',' && !inQuotes)
+                {
+                    result.Add(current);
+                    current = "";
+                }
+                else
+                {
+                    current += c;
+                }
+            }
+
+            result.Add(current);
+            return result.ToArray();
+        }
+
+        private string Get(Dictionary<string, string> row, string key, string fallback)
+        {
+            if (row != null && row.ContainsKey(key))
+                return row[key];
+            return fallback;
+        }
+
+        private string Csv(string value)
+        {
+            if (value == null)
+                value = "";
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+
+        private string GetLeaderSymbol(string sym)
+        {
+            if (sym.Contains("MNQ")) return "NQ";
+            if (sym.Contains("MES")) return "ES";
+            if (sym.Contains("NQ")) return "NQ";
+            if (sym.Contains("ES")) return "ES";
+            return sym;
         }
     }
 }

@@ -1,0 +1,4 @@
+family,lane_bucket,trades,wins,losses,win_rate,net_pnl,avg_pnl,gross_pnl,ticks
+Kalman Faders,OUT_OF_LANE,131,33,98,25.2,-12005.0,-91.64,-12005.0,-2401.0
+V3C Compression,IN_LANE,208,163,45,78.4,32925.0,158.29,32925.0,6585.0
+V3C Compression,OUT_OF_LANE,212,188,24,88.7,46205.0,217.95,46205.0,9241.0

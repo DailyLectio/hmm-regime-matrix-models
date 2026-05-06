@@ -1,0 +1,5 @@
+audit_family,v3c_regime_norm,trades,wins,losses,win_rate,net_pnl,avg_pnl,gross_pnl,ticks
+Kalman Faders,TRANSITION,37,11,26,29.7,-1930.0,-52.16,-1930.0,-302.0
+Kalman Faders,TREND_COMPRESSION,24,1,23,4.2,-690.0,-28.75,-690.0,-138.0
+V3C Compression,TRANSITION,9,9,0,100.0,2180.0,242.22,2180.0,436.0
+V3C Compression,TREND_COMPRESSION,80,39,41,48.8,-840.0,-10.5,-840.0,-168.0

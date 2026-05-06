@@ -82,6 +82,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private DateTime lastPipelineCheck = DateTime.MinValue;
         private const int PipelineCheckSeconds = 60;
         private string liveExportFile = "";
+        private int lastHistoryWriteBar = -1;
+        private string lastSnapshotTimestamp = "";
+        private string lastMacroTimestamp = "";
+        private string lastMicroTimestamp = "";
 
         [NinjaScriptProperty]
         [Display(Name="Data Folder Path", Description="Path to V3C Python CSVs.", GroupName="Data Settings", Order=0)]
@@ -94,6 +98,14 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name="Debug Prints", Description="Print V3C read diagnostics.", GroupName="Data Settings", Order=2)]
         public bool DebugPrints { get; set; } = false;
+
+        [NinjaScriptProperty]
+        [Display(Name="Write HUD History CSV", Description="Append one HUD-read audit row per chart bar.", GroupName="History Export", Order=0)]
+        public bool WriteHudHistoryCsv { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name="HUD History Folder", Description="Blank = V3C\\History\\HUD_Reads.", GroupName="History Export", Order=1)]
+        public string HudHistoryFolder { get; set; } = "";
 
         private Grid myGrid;
         private TextBlock headerText;
@@ -147,6 +159,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             LoadV3CFileIfNeeded();
             CheckPipelineStatus();
+            WriteHudHistoryRow();
             UpdateHUD();
         }
 
@@ -241,6 +254,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 HMMMicro = Get(row, "HMM_Micro", "UNKNOWN");
                 ReasonCode = Get(row, "ReasonCode", "");
                 StaleReason = Get(row, "StaleReason", "");
+                lastSnapshotTimestamp = Get(row, "SnapshotTimestamp", "");
+                lastMacroTimestamp = Get(row, "MacroTimestamp", "");
+                lastMicroTimestamp = Get(row, "MicroTimestamp", "");
 
                 RegimeConfidence = ParseInt(Get(row, "RegimeConfidence", "0"), 0);
                 ConflictScore = ParseInt(Get(row, "ConflictScore", "0"), 0);
@@ -375,6 +391,89 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (row != null && row.ContainsKey(key))
                 return row[key];
             return fallback;
+        }
+
+        private void WriteHudHistoryRow()
+        {
+            if (!WriteHudHistoryCsv || CurrentBar < 1 || lastHistoryWriteBar == CurrentBar)
+                return;
+
+            lastHistoryWriteBar = CurrentBar;
+
+            try
+            {
+                string chartSym = Instrument.MasterInstrument.Name;
+                string leaderSym = GetLeaderSymbol(chartSym);
+                string folder = string.IsNullOrWhiteSpace(HudHistoryFolder)
+                    ? Path.Combine(DataFolderPath, "History", "HUD_Reads")
+                    : HudHistoryFolder;
+
+                Directory.CreateDirectory(folder);
+
+                string sessionDate = Time[0].ToString("yyyyMMdd");
+                string path = Path.Combine(folder, $"{leaderSym}_V3C_HUD_ReadHistory_{sessionDate}.csv");
+                bool exists = File.Exists(path);
+
+                if (!exists)
+                {
+                    File.AppendAllText(path,
+                        "HudReadTimestampLocal,BarTimestamp,CurrentBar,ChartSymbol,LeaderSymbol,SourceFile,SourceFileModifiedUtc,SnapshotTimestamp,MacroTimestamp,MicroTimestamp,FinalRegime,FinalDirection,MacroRegime,MacroPlaybook,HMMMicro,RegimeConfidence,ConflictScore,Velocity3CP,HMMStateAgeBars,AsymHysteresisGateOpen,AsymHysteresisReason,AsymHysteresisEnabled,AllowLong,AllowShort,AllowMomo,AllowMomoLong,AllowMomoShort,AllowAdxx,AllowPine,AllowEsScalper,AllowBracketSniper,AllowExpansionBot,AllowCompressionBot,AllowFadeBot,StaleDataFlag,StaleReason,LiveFeedFresh,ReasonCode\n");
+                }
+
+                string line = string.Join(",",
+                    Csv(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")),
+                    Csv(Time[0].ToString("yyyy-MM-dd HH:mm:ss")),
+                    Csv(CurrentBar.ToString()),
+                    Csv(chartSym),
+                    Csv(leaderSym),
+                    Csv(lastFileRead),
+                    Csv(lastFileWriteUtc == DateTime.MinValue ? "" : lastFileWriteUtc.ToString("yyyy-MM-dd HH:mm:ss")),
+                    Csv(lastSnapshotTimestamp),
+                    Csv(lastMacroTimestamp),
+                    Csv(lastMicroTimestamp),
+                    Csv(FinalRegime),
+                    Csv(FinalDirection),
+                    Csv(MacroRegime),
+                    Csv(MacroPlaybook),
+                    Csv(HMMMicro),
+                    Csv(RegimeConfidence.ToString()),
+                    Csv(ConflictScore.ToString()),
+                    Csv(Velocity3CP.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    Csv(HMMStateAgeBars.ToString()),
+                    Csv(AsymHysteresisGateOpen.ToString()),
+                    Csv(AsymHysteresisReason),
+                    Csv(AsymHysteresisEnabled.ToString()),
+                    Csv(AllowLong.ToString()),
+                    Csv(AllowShort.ToString()),
+                    Csv(IsMomoAllowed.ToString()),
+                    Csv(IsMomoLongAllowed.ToString()),
+                    Csv(IsMomoShortAllowed.ToString()),
+                    Csv(IsAdxAllowed.ToString()),
+                    Csv(IsPineAllowed.ToString()),
+                    Csv(IsEsScalperAllowed.ToString()),
+                    Csv(IsBracketSniperAllowed.ToString()),
+                    Csv(IsExpansionBotAllowed.ToString()),
+                    Csv(IsCompressionBotAllowed.ToString()),
+                    Csv(IsFadeBotAllowed.ToString()),
+                    Csv(StaleDataFlag.ToString()),
+                    Csv(StaleReason),
+                    Csv(LiveFeedFresh.ToString()),
+                    Csv(ReasonCode));
+
+                File.AppendAllText(path, line + "\n");
+            }
+            catch (Exception ex)
+            {
+                if (DebugPrints)
+                    Print($"{Instrument.MasterInstrument.Name} V3C HUD history write error: {ex.Message}");
+            }
+        }
+
+        private string Csv(string value)
+        {
+            if (value == null)
+                value = "";
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
         }
 
         private bool ParseBool(string value)
