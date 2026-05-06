@@ -1,0 +1,24 @@
+﻿Regime Expansion Opportunity Audit Package
+Created: 2026-05-06 12:00:05
+Root: C:\Users\Valued Customer\NT8_Regimes\Audits\Regime_Expansion_Opportunity_20260506_1045
+
+Primary report:
+- Regime_Expansion_Opportunity_Audit_20260506.md
+- Engineer_Response_Commentary.md
+
+Images:
+- images\01_NQ_daily_trend_expansion_chart_20260506.png
+- images\02_ES_V3D_HUD_trend_compression_20260506.png
+- images\03_NQ_V3D_HUD_rotation_liquid_20260506.png
+
+Evidence:
+- evidence\regime_gating_snapshot_summary.csv
+- evidence\v3d_trade_log_summary.csv
+- V3D/V3C Latest CSV snapshots
+- NQ V3D/V3C full/history CSVs
+- V3D trade logs
+- April27toMay6 current NinjaTrader grid export
+
+Scripts reviewed:
+- scripts_reviewed\RegimeSupervisor_V3D.py
+- scripts_reviewed\RegimeMatrixSupervisor.py
