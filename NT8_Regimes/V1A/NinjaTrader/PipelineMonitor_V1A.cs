@@ -350,10 +350,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (!exists)
                 {
                     File.AppendAllText(path,
-                        "HudReadTimestampLocal,BarTimestamp,CurrentBar,ChartSymbol,LeaderSymbol,V1ABOperatingModel,V1ABDailyBias,V1ABPlaybook,V1ABMacroRegime,V1ABHMMRegime,LiveFeedStatus,ValueAreaStatus,FootprintStatus,TradeLogStatus,ScannerABSFresh,ScannerABSAgeMin,ScannerDDFresh,ScannerDDAgeMin,ScannerTFFresh,ScannerTFAgeMin,ScannerDTFresh,ScannerDTAgeMin,ScannerDEIAFresh,ScannerDEIAAgeMin,ScannerEEMDFFresh,ScannerEEMDFAgeMin,V3CFinalRegime,V3CFinalDirection,V3CSnapshotTimestamp,V3DFinalRegime,V3DFinalDirection,V3DTimestampET\n");
+                        "TaxonomyVersion,Model,Symbol,Time,Account,Phase,EntryRegime,Dir,Result,Exit,NetPnL,HudReadTimestampLocal,BarTimestamp,CurrentBar,ChartSymbol,LeaderSymbol,V1ABOperatingModel,V1ABDailyBias,V1ABPlaybook,V1ABMacroRegime,V1ABHMMRegime,LiveFeedStatus,ValueAreaStatus,FootprintStatus,TradeLogStatus,ScannerABSFresh,ScannerABSAgeMin,ScannerDDFresh,ScannerDDAgeMin,ScannerTFFresh,ScannerTFAgeMin,ScannerDTFresh,ScannerDTAgeMin,ScannerDEIAFresh,ScannerDEIAAgeMin,ScannerEEMDFFresh,ScannerEEMDFAgeMin,V3CFinalRegime,V3CFinalDirection,V3CSnapshotTimestamp,V3DFinalRegime,V3DFinalDirection,V3DTimestampET\n");
                 }
 
                 string line = string.Join(",",
+                    Csv("HUD_TAXONOMY_V1"),
+                    Csv("V1A_V1B_PIPELINE"),
+                    Csv(sym),
+                    Csv(Time[0].ToString("HH:mm")),
+                    Csv(""),
+                    Csv(PhaseForTime(Time[0])),
+                    Csv("SELF_GATED_NO_MATRIX_REGIME"),
+                    Csv(""),
+                    Csv(""),
+                    Csv(""),
+                    Csv(""),
                     Csv(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")),
                     Csv(Time[0].ToString("yyyy-MM-dd HH:mm:ss")),
                     Csv(CurrentBar.ToString()),
@@ -507,6 +518,22 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (value == null)
                 value = "";
             return "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+
+        private string PhaseForTime(DateTime t)
+        {
+            int hm = t.Hour * 100 + t.Minute;
+            if (hm < 930) return "PREMARKET";
+            if (hm < 945) return "OPENING_AUCTION";
+            if (hm < 1010) return "EARLY_TEST";
+            if (hm < 1030) return "END_FIRST_WINDOW";
+            if (hm < 1100) return "PRE_IB_MATURATION";
+            if (hm < 1200) return "MID_MORNING_DISCOVERY";
+            if (hm < 1300) return "LUNCH_AUCTION";
+            if (hm < 1400) return "POST_LUNCH_ROTATION";
+            if (hm < 1530) return "AFTERNOON_TREND_TEST";
+            if (hm < 1600) return "LATE_DAY_CONVICTION";
+            return "CASH_CLOSE";
         }
 
         private string GetLeaderSymbol(string sym)

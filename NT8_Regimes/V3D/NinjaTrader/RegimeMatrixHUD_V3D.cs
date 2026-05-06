@@ -532,10 +532,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (!exists)
                 {
                     File.AppendAllText(path,
-                        "HudReadTimestampLocal,BarTimestamp,CurrentBar,ChartSymbol,LeaderSymbol,SourceFile,SourceFileModifiedUtc,SessionKey,TimestampET,HMMAsOfTimestampET,FinalRegime,FinalDirection,MacroRegime,MacroPlaybook,MacroCheckpointState,HMMRegime,HMMDirection,RegimeConfidence,ConflictScore,Phase,Velocity3P,StateAgeBars,HMMStateAgeBars,AsymHysteresisGateOpen,AsymHysteresisReason,AsymHysteresisEnabled,AllowLong,AllowShort,AllowFadeLong,AllowFadeShort,AllowExpansion,AllowMomo,AllowPine,AllowADX_DI,AllowSniper,ExpansionSizePct,MomoSizePct,PineSizePct,ADX_DISizePct,SniperSizePct,StaleDataFlag,PipelineAllGreen,ValueAreaFresh,LiveFeedFresh,MacroFresh,HMMFresh,KillOnPipelineStale,IsAutoMode,KillAllActive,ReasonCode\n");
+                        "TaxonomyVersion,Model,Symbol,Time,Account,Phase,EntryRegime,Dir,Result,Exit,NetPnL,HudReadTimestampLocal,BarTimestamp,CurrentBar,ChartSymbol,LeaderSymbol,SourceFile,SourceFileModifiedUtc,SessionKey,TimestampET,HMMAsOfTimestampET,FinalRegime,FinalDirection,MacroRegime,MacroPlaybook,MacroCheckpointState,HMMRegime,HMMDirection,RegimeConfidence,ConflictScore,PhaseDetail,Velocity3P,StateAgeBars,HMMStateAgeBars,AsymHysteresisGateOpen,AsymHysteresisReason,AsymHysteresisEnabled,AllowLong,AllowShort,AllowFadeLong,AllowFadeShort,AllowExpansion,AllowMomo,AllowPine,AllowADX_DI,AllowSniper,ExpansionSizePct,MomoSizePct,PineSizePct,ADX_DISizePct,SniperSizePct,StaleDataFlag,PipelineAllGreen,ValueAreaFresh,LiveFeedFresh,MacroFresh,HMMFresh,KillOnPipelineStale,IsAutoMode,KillAllActive,ReasonCode\n");
                 }
 
                 string line = string.Join(",",
+                    Csv("HUD_TAXONOMY_V1"),
+                    Csv("V3D"),
+                    Csv(_leaderSymbol),
+                    Csv(Time[0].ToString("HH:mm")),
+                    Csv(""),
+                    Csv(Phase),
+                    Csv(FinalRegime),
+                    Csv(FinalDirection),
+                    Csv(""),
+                    Csv(""),
+                    Csv(""),
                     Csv(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")),
                     Csv(Time[0].ToString("yyyy-MM-dd HH:mm:ss")),
                     Csv(CurrentBar.ToString()),

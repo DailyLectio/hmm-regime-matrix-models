@@ -65,6 +65,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         public string MacroRegime { get; private set; } = "UNKNOWN";
         public string MacroPlaybook { get; private set; } = "UNKNOWN";
         public string HMMMicro { get; private set; } = "UNKNOWN";
+        public string Phase { get; private set; } = "UNKNOWN";
         public string ReasonCode { get; private set; } = "";
         public string StaleReason { get; private set; } = "";
         public int RegimeConfidence { get; private set; } = 0;
@@ -252,6 +253,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 MacroRegime = Get(row, "MacroRegime", "UNKNOWN");
                 MacroPlaybook = Get(row, "MacroPlaybook", "UNKNOWN");
                 HMMMicro = Get(row, "HMM_Micro", "UNKNOWN");
+                Phase = Get(row, "Phase", "UNKNOWN");
                 ReasonCode = Get(row, "ReasonCode", "");
                 StaleReason = Get(row, "StaleReason", "");
                 lastSnapshotTimestamp = Get(row, "SnapshotTimestamp", "");
@@ -417,10 +419,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (!exists)
                 {
                     File.AppendAllText(path,
-                        "HudReadTimestampLocal,BarTimestamp,CurrentBar,ChartSymbol,LeaderSymbol,SourceFile,SourceFileModifiedUtc,SnapshotTimestamp,MacroTimestamp,MicroTimestamp,FinalRegime,FinalDirection,MacroRegime,MacroPlaybook,HMMMicro,RegimeConfidence,ConflictScore,Velocity3CP,HMMStateAgeBars,AsymHysteresisGateOpen,AsymHysteresisReason,AsymHysteresisEnabled,AllowLong,AllowShort,AllowMomo,AllowMomoLong,AllowMomoShort,AllowAdxx,AllowPine,AllowEsScalper,AllowBracketSniper,AllowExpansionBot,AllowCompressionBot,AllowFadeBot,StaleDataFlag,StaleReason,LiveFeedFresh,ReasonCode\n");
+                        "TaxonomyVersion,Model,Symbol,Time,Account,Phase,EntryRegime,Dir,Result,Exit,NetPnL,HudReadTimestampLocal,BarTimestamp,CurrentBar,ChartSymbol,LeaderSymbol,SourceFile,SourceFileModifiedUtc,SnapshotTimestamp,MacroTimestamp,MicroTimestamp,FinalRegime,FinalDirection,MacroRegime,MacroPlaybook,HMMMicro,RegimeConfidence,ConflictScore,Velocity3CP,HMMStateAgeBars,AsymHysteresisGateOpen,AsymHysteresisReason,AsymHysteresisEnabled,AllowLong,AllowShort,AllowMomo,AllowMomoLong,AllowMomoShort,AllowAdxx,AllowPine,AllowEsScalper,AllowBracketSniper,AllowExpansionBot,AllowCompressionBot,AllowFadeBot,StaleDataFlag,StaleReason,LiveFeedFresh,ReasonCode\n");
                 }
 
                 string line = string.Join(",",
+                    Csv("HUD_TAXONOMY_V1"),
+                    Csv("V3C"),
+                    Csv(leaderSym),
+                    Csv(Time[0].ToString("HH:mm")),
+                    Csv(""),
+                    Csv(Phase),
+                    Csv(FinalRegime),
+                    Csv(FinalDirection),
+                    Csv(""),
+                    Csv(""),
+                    Csv(""),
                     Csv(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")),
                     Csv(Time[0].ToString("yyyy-MM-dd HH:mm:ss")),
                     Csv(CurrentBar.ToString()),
