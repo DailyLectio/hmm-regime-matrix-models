@@ -1,44 +1,44 @@
 {
-  "NQ_last_fit_rows": 1029831,
-  "NQ_last_fit_ts": "2026-05-06T13:25:28.638928",
-  "NQ_last_ll": -17808.6299,
+  "NQ_last_fit_rows": 1029947,
+  "NQ_last_fit_ts": "2026-05-06T13:55:15.405875",
+  "NQ_last_ll": -17600.9163,
   "NQ_label_map": {
     "2": "TrendUp",
     "3": "TrendDown",
     "0": "Balance",
     "1": "Transition"
   },
-  "ES_last_fit_rows": 1027927,
-  "ES_last_fit_ts": "2026-05-06T13:25:42.951065",
-  "ES_last_ll": -18194.9665,
+  "ES_last_fit_rows": 1028047,
+  "ES_last_fit_ts": "2026-05-06T13:55:31.573956",
+  "ES_last_ll": -17461.7375,
   "ES_label_map": {
     "3": "TrendUp",
-    "2": "TrendDown",
-    "1": "Balance",
-    "0": "Transition"
+    "1": "TrendDown",
+    "0": "Balance",
+    "2": "Transition"
   },
-  "NQ_last_fit_rth_rows": 294347,
-  "NQ_last_fit_5m_ts": "2026-05-06T13:25:00",
-  "ES_last_fit_rth_rows": 294861,
-  "ES_last_fit_5m_ts": "2026-05-06T13:25:00",
-  "NQ_last_seen_raw_rows": 1029843,
-  "NQ_last_seen_rth_rows": 294350,
-  "ES_last_seen_raw_rows": 1027943,
-  "ES_last_seen_rth_rows": 294865,
+  "NQ_last_fit_rth_rows": 294377,
+  "NQ_last_fit_5m_ts": "2026-05-06T13:55:00",
+  "ES_last_fit_rth_rows": 294891,
+  "ES_last_fit_5m_ts": "2026-05-06T13:55:00",
+  "NQ_last_seen_raw_rows": 1029967,
+  "NQ_last_seen_rth_rows": 294381,
+  "ES_last_seen_raw_rows": 1028063,
+  "ES_last_seen_rth_rows": 294895,
   "NQ_label_diagnostics": {
     "ambiguous_fit": false,
-    "vwap_separation": 0.503324,
-    "tu_vwap_mean": 0.379554,
-    "td_vwap_mean": -0.12377,
-    "tu_ret_mean": 0.000902,
-    "td_ret_mean": -5.9e-05
+    "vwap_separation": 1.296404,
+    "tu_vwap_mean": 0.042167,
+    "td_vwap_mean": -1.254236,
+    "tu_ret_mean": 0.000167,
+    "td_ret_mean": -0.000136
   },
   "ES_label_diagnostics": {
     "ambiguous_fit": false,
-    "vwap_separation": 3.340206,
-    "tu_vwap_mean": 3.181198,
-    "td_vwap_mean": -0.159008,
-    "tu_ret_mean": 0.032985,
-    "td_ret_mean": -1.1e-05
+    "vwap_separation": 0.490514,
+    "tu_vwap_mean": 0.080677,
+    "td_vwap_mean": -0.409837,
+    "tu_ret_mean": 0.000919,
+    "td_ret_mean": -4e-05
   }
 }
