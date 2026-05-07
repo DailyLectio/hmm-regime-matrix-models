@@ -1,2 +1,3 @@
 trade_date,entry_time,exit_time,model_version,account,strategy_name,bot_name,ab_mode,symbol,instrument,direction,contracts,entry_price,exit_price,gross_pnl,net_pnl,ticks,win_loss,exit_reason,initial_stop_price,initial_stop_distance,export_timestamp
 2026-05-07,2026-05-07 13:43:03,2026-05-07 13:45:00,OG,SimMomo1,NQ Momo OG 1m HA 20,OG_MomentumSlope_v1_2,OG,NQ,NQ JUN26,SHORT,1,28649.25,28644.50,90.64,86.28,17.3,WIN,SLOPE_EXIT,28674.25,500.00,2026-05-07 13:45:00
+2026-05-07,2026-05-07 14:09:53,2026-05-07 14:11:00,OG,SimMomo1,NQ Momo OG 1m HA 20,OG_MomentumSlope_v1_2,OG,NQ,NQ JUN26,SHORT,1,28661.75,28682.25,-414.36,-418.72,-83.7,LOSS,SLOPE_EXIT,28684.00,445.00,2026-05-07 14:11:00
