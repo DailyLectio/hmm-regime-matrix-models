@@ -1,0 +1,29 @@
+Data Quality Report 20260507
+Generated: 2026-05-07 16:22:27
+Rows: 54
+
+Flag counts:
+  OK: 36
+  SHARED_EXPORTER_LABEL: 9
+  UNAVAILABLE_REGIME;SHARED_EXPORTER_LABEL: 7
+  MISSING_ACCOUNT;UNAVAILABLE_REGIME: 2
+
+Non-OK rows:
+  2026-05-07 | 2026-05-07 04:35:00 | SimADX Gu5 | OG | AdxDiCrossBracketOG | OG_AdxDiCrossBracketOG | OG_AdxDiCrossBracketOG |  |  | UNAVAILABLE_REGIME;SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 04:35:00 | SimADX Pine | OG | AdxDiCrossStrategy_PineTrail | OG_AdxDiCrossStrategyPineTrail | OG_AdxDiCrossStrategyPineTrail |  |  | UNAVAILABLE_REGIME;SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 11:30:00 | SimADX Pine | OG | AdxDiCrossStrategy_PineTrail | OG_AdxDiCrossStrategyPineTrail | OG_AdxDiCrossStrategyPineTrail |  |  | SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 04:35:00 | SimADX1 | OG | AdxDiCrossBracketOG 5m Trinity false | OG_AdxDiCrossBracketOG | OG_AdxDiCrossBracketOG |  | ADX OG | UNAVAILABLE_REGIME;SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 04:35:00 | SimPine1 | OG | PINE OG | OG_AdxDiCrossStrategyPineTrail | OG_AdxDiCrossStrategyPineTrail |  |  | UNAVAILABLE_REGIME;SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 11:30:00 | SimPine1 | OG | PINE OG | OG_AdxDiCrossStrategyPineTrail | OG_AdxDiCrossStrategyPineTrail |  |  | SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 10:48:35 | SimV1A - Kalman Fader 2 | V1A | KalmanPulse Fader Mode A+ | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode A+ | SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 11:01:09 | SimV1A - Kalman Fader 2 | V1A | KalmanPulse Fader Mode A+ | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode A+ | SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 13:36:00 | SimV1A - Kalman Fader 2 | V1A | KalmanPulse Fader Mode A+ | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode A+ | SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 14:57:00 | SimV1A - Kalman Fader 2 | V1A | KalmanPulse Fader Mode A+ | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode A+ | SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 15:18:06 | SimV1A - Kalman Fader 2 | V1A | KalmanPulse Fader Mode A+ | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode A+ | UNAVAILABLE_REGIME;SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 10:34:25 | SimV1A Kalman Fader 3 | V1B | KalmanPulse_Fader_V1B | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode B | SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 10:39:55 | SimV1A Kalman Fader 3 | V1B | KalmanPulse_Fader_V1B | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode B | SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 10:43:53 | SimV1A Kalman Fader 3 | V1B | KalmanPulse_Fader_V1B | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode B | SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 15:11:08 | SimV1A Kalman Fader 3 | V1B | KalmanPulse_Fader_V1B | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode B | UNAVAILABLE_REGIME;SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 15:12:05 | SimV1A Kalman Fader 3 | V1B | KalmanPulse_Fader_V1B | KalmanPulse_Fader_B | KalmanPulse_Fader_B | Middle 3 | Kalman Fade Mode B | UNAVAILABLE_REGIME;SHARED_EXPORTER_LABEL
+  2026-05-07 | 2026-05-07 03:18:45 | nan | V3C | V3_Expansion_Rider_V3C | V3_Expansion_Rider_V3C | V3_Expansion_Rider_V3C |  |  | MISSING_ACCOUNT;UNAVAILABLE_REGIME
+  2026-05-07 | 2026-05-07 05:03:03 | nan | V3C | V3_Expansion_Rider_V3C | V3_Expansion_Rider_V3C | V3_Expansion_Rider_V3C |  |  | MISSING_ACCOUNT;UNAVAILABLE_REGIME
