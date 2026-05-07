@@ -145,9 +145,12 @@ ALL_MODELS_EXPORT.bat
   → eod_export.py --date today
         reads:  V1A\TradeLog\*.csv
                 V1B\TradeLog\*.csv
-                V3C\TradeLog\{AccountName}_TradeLog.csv   ← NEW
-                V3D\TradeLog\V3D_TradeLog.csv
+                V3C\TradeLog\{AccountName}_TradeLog.csv
+                V3D\TradeLog\V3D_INTERNAL_TradeLog.csv first,
+                  then clean SimV3D_*_TradeLog.csv per-account files
                 OG\TradeLog\OG_TradeLog.csv
+        skips:  V3D\TradeLog\V3D_TradeLog.csv unless it has been intentionally
+                archived and regenerated as a clean legacy source
         corrects: model_version contamination via registry
         drops:  DEMO1419193 and other EXCLUDE accounts
         enriches: entry_regime, entry_macro, entry_hmm from RegimeMatrix history

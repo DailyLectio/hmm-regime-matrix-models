@@ -64,11 +64,11 @@ Until that is changed in the active NT8 workspace, that tab may fail to log corr
 
 ## Handoff Items
 
-1. Compile NinjaScript when workspaces are ready. Do not compile during this staging pass.
+1. Compile NinjaScript when workspaces are ready. Marked done by operator on 2026-05-07.
 2. In NT8, remove any chart indicator named `Trade Log Exporter (V3D)`, `TradeLogExporter_V3D`, or `TradeLogExporterV3D` from V3C and Trade Screen charts.
-3. Fix the V3C 5A strategy setting: `AccountNameFilter = SimV3C-NQ-5A`.
+3. Fix the V3C 5A strategy setting: `AccountNameFilter = SimV3C-NQ-5A`. Marked done by operator on 2026-05-07.
 4. After first V3D fills post-compile, verify clean rows appear in:
    - `V3D\TradeLog\SimV3D_*_TradeLog.csv`
    - `V3D\TradeLog\V3D_INTERNAL_TradeLog.csv`
-5. Update EOD/export scripts to prefer the clean V3D per-account files or `V3D_INTERNAL_TradeLog.csv`. Treat existing `V3D\TradeLog\V3D_TradeLog.csv` as legacy/contaminated unless it has been archived and regenerated intentionally.
+5. EOD/export scripts updated on 2026-05-07 to prefer `V3D_INTERNAL_TradeLog.csv`, then clean `SimV3D_*_TradeLog.csv`; `V3D_TradeLog.csv` is skipped as legacy/contaminated.
 6. Investigate the DEMO1419193 duplicate path in the Trade Screen workspace. The code pass cannot remove live workspace indicator instances.

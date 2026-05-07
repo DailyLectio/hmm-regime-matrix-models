@@ -73,8 +73,9 @@ Raw Stage 1 fields include:
 
 Exporter coverage:
 
-- Reads legacy combined logs and new per-bot `*_TradeLog.csv` files.
-- Discovers logs from `V1A`, `V1B`, `V3C`, `V3D`, and `OG`.
+- Reads current combined logs and strategy-owned `*_TradeLog.csv` files.
+- Discovers logs from `V1A`, `V1B`, `V3C`, and `OG`.
+- For `V3D`, prefers `V3D\TradeLog\V3D_INTERNAL_TradeLog.csv`, then clean `SimV3D_*_TradeLog.csv` per-account files. The old `V3D_TradeLog.csv` is skipped as legacy/contaminated unless it has been intentionally archived and regenerated.
 - Adds `initial_stop_price`, `initial_stop_distance`, and `r_multiple`.
 - Writes model-specific history files and master unified files.
 - Deduplicates repeated trade rows by trade signature and keeps the row with the richest Stage 1 fields.

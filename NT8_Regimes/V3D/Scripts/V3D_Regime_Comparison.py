@@ -6,8 +6,9 @@ Reads:
                         produced by V3D_Daily_Regime_Report.py
   2. V3C Active CSV    (Active/NQ_Regimes.csv / ES_Regimes.csv)
                         for day-level history; falls back to V3C Latest CSV
-  3. Trade log CSV     (V3D/TradeLog/V3D_TradeLog.csv)
-                        written by TradeLogExporter_V3D.cs
+  3. Trade log CSV     Preferred: V3D/TradeLog/V3D_INTERNAL_TradeLog.csv
+                        Fallback: clean SimV3D_*_TradeLog.csv per-account files
+                        Legacy V3D_TradeLog.csv is skipped by default.
 
 Appends (never overwrites; existing rows for a date are replaced on re-run):
   A. V3D/History/V3C_V3D_Regime_Comparison.csv
@@ -61,7 +62,8 @@ V3C_ACTIVE = {
     "ES": os.path.join(ACTIVE_DIR, "ES_Regimes.csv"),
 }
 
-TRADELOG_PATH          = os.path.join(TRADELOG_DIR, "V3D_TradeLog.csv")
+TRADELOG_INTERNAL_PATH = os.path.join(TRADELOG_DIR, "V3D_INTERNAL_TradeLog.csv")
+TRADELOG_LEGACY_PATH   = os.path.join(TRADELOG_DIR, "V3D_TradeLog.csv")
 REGIME_COMPARISON_PATH = os.path.join(HISTORY_DIR, "V3C_V3D_Regime_Comparison.csv")
 INTRADAY_COMPARISON_PATH = os.path.join(HISTORY_DIR, "V3C_V3D_Intraday_Comparison.csv")
 TRADE_ENRICHED_PATH    = os.path.join(HISTORY_DIR, "V3D_Trade_Log_Enriched.csv")
@@ -184,7 +186,7 @@ REGIME_COMPARISON_COLS = [
 ]
 
 TRADE_ENRICHED_COLS = [
-    # Passthrough from TradeLogExporter_V3D.cs
+    # Passthrough from V3DStrategyTradeLogger.cs or the legacy V3D exporter
     "trade_date", "entry_time", "exit_time", "symbol", "bot_name",
     "model_version", "direction", "contracts",
     "entry_price", "exit_price", "gross_pnl", "net_pnl", "ticks", "win_loss",
@@ -555,16 +557,76 @@ def build_intraday_comparison(symbol: str, report_date: date) -> list[dict]:
 # 3.  TRADE LOG - load, enrich, summarize
 # ===========================================================================
 
+def has_data_rows(path: str) -> bool:
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return sum(1 for _ in handle) > 1
+    except OSError:
+        return False
+
+
+def discover_trade_log_paths() -> list[str]:
+    if has_data_rows(TRADELOG_INTERNAL_PATH):
+        if has_data_rows(TRADELOG_LEGACY_PATH):
+            log.info(
+                "Using V3D_INTERNAL_TradeLog.csv and skipping legacy "
+                "V3D_TradeLog.csv."
+            )
+        return [TRADELOG_INTERNAL_PATH]
+
+    account_paths = sorted(
+        str(p) for p in Path(TRADELOG_DIR).glob("SimV3D*_TradeLog.csv")
+        if has_data_rows(str(p))
+    )
+    if account_paths:
+        if has_data_rows(TRADELOG_LEGACY_PATH):
+            log.info(
+                "Using clean SimV3D per-account trade logs and skipping "
+                "legacy V3D_TradeLog.csv."
+            )
+        return account_paths
+
+    if has_data_rows(TRADELOG_LEGACY_PATH):
+        log.warning(
+            "Legacy V3D_TradeLog.csv exists but was not loaded because it is "
+            "treated as contaminated unless intentionally archived/regenerated."
+        )
+    return []
+
+
 def load_trade_log() -> pd.DataFrame:
-    if not os.path.exists(TRADELOG_PATH):
-        log.info(f"Trade log not found: {TRADELOG_PATH}  (no trades to process)")
+    paths = discover_trade_log_paths()
+    if not paths:
+        log.info(
+            "No clean V3D trade log source found. Waiting for "
+            "V3D_INTERNAL_TradeLog.csv or SimV3D_*_TradeLog.csv."
+        )
+        return pd.DataFrame()
+
+    frames = []
+    total_rows = 0
+    for path in paths:
+        try:
+            df = pd.read_csv(path, dtype=str)
+            if df.empty:
+                continue
+            df["source_file"] = path
+            frames.append(df)
+            total_rows += len(df)
+            log.info(f"Trade log: {len(df)} rows loaded from {path}")
+        except Exception as e:
+            log.warning(f"Trade log read failed for {path}: {e}")
+
+    if not frames:
         return pd.DataFrame()
     try:
-        df = pd.read_csv(TRADELOG_PATH, dtype=str)
-        log.info(f"Trade log: {len(df)} rows loaded from {TRADELOG_PATH}")
-        return df
+        out = pd.concat(frames, ignore_index=True, sort=False)
+        log.info(f"Trade log: {total_rows} clean V3D row(s) loaded")
+        return out
     except Exception as e:
-        log.warning(f"Trade log read failed: {e}")
+        log.warning(f"Trade log merge failed: {e}")
         return pd.DataFrame()
 
 

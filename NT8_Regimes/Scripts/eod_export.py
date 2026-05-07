@@ -22,14 +22,13 @@ REGISTRY_PATH = BASE_DIR / "accounts_registry.json"   # must exist at this path
 UNIFIED_DIR = BASE_DIR / "UNIFIED"
 
 RAW_TRADE_LOGS = [
-    # These are the master per-model logs written by the NT8 TradeLogExporter.
-    # V3C is intentionally included here - its strategies write to V3C\TradeLog\.
-    # If V3C strategies do not yet have Stage 1 logging, this path will not exist
-    # and discover_raw_trade_logs() will skip it gracefully.
+    # These are the master per-model logs written by the NT8 TradeLogExporter
+    # or by the strategy-owned internal loggers.
+    # V3D is discovered separately so the contaminated legacy
+    # V3D_TradeLog.csv is not consumed by default.
     BASE_DIR / "V1A" / "TradeLog" / "V1A_TradeLog.csv",
     BASE_DIR / "V1B" / "TradeLog" / "V1B_TradeLog.csv",
     BASE_DIR / "V3C" / "TradeLog" / "V3C_TradeLog.csv",
-    BASE_DIR / "V3D" / "TradeLog" / "V3D_TradeLog.csv",
     BASE_DIR / "OG"  / "TradeLog" / "OG_TradeLog.csv",
 ]
 
@@ -253,14 +252,56 @@ def read_trade_logs(paths: list[Path]) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True, sort=False)
 
 
+def has_data_rows(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return sum(1 for _ in handle) > 1
+    except OSError:
+        return False
+
+
+def discover_v3d_trade_logs(base_dir: Path) -> list[Path]:
+    trade_dir = base_dir / "V3D" / "TradeLog"
+    internal = trade_dir / "V3D_INTERNAL_TradeLog.csv"
+    legacy = trade_dir / "V3D_TradeLog.csv"
+
+    if has_data_rows(internal):
+        if has_data_rows(legacy):
+            print(
+                "  [V3D source policy] Using V3D_INTERNAL_TradeLog.csv and "
+                "skipping legacy V3D_TradeLog.csv."
+            )
+        return [internal]
+
+    account_logs = sorted(trade_dir.glob("SimV3D*_TradeLog.csv")) if trade_dir.exists() else []
+    account_logs = [p for p in account_logs if has_data_rows(p)]
+    if account_logs:
+        if has_data_rows(legacy):
+            print(
+                "  [V3D source policy] Using clean SimV3D per-account logs and "
+                "skipping legacy V3D_TradeLog.csv."
+            )
+        return account_logs
+
+    if has_data_rows(legacy):
+        print(
+            "  [V3D source policy] Legacy V3D_TradeLog.csv exists but was not "
+            "loaded because it is treated as contaminated unless intentionally archived/regenerated."
+        )
+    return []
+
+
 def discover_raw_trade_logs(base_dir: Path) -> list[Path]:
     paths: list[Path] = []
     for rel in RAW_TRADE_LOGS:
         paths.append(base_dir / rel.relative_to(BASE_DIR))
-    for model in ("V1A", "V1B", "V3C", "V3D", "OG"):
+    for model in ("V1A", "V1B", "V3C", "OG"):
         trade_dir = base_dir / model / "TradeLog"
         if trade_dir.exists():
             paths.extend(sorted(trade_dir.glob("*_TradeLog.csv")))
+    paths.extend(discover_v3d_trade_logs(base_dir))
 
     seen: set[Path] = set()
     unique: list[Path] = []
@@ -760,9 +801,9 @@ def main() -> int:
 
     # -------------------------------------------------------------------------
     # Contamination guard: correct model_version for any row whose account
-    # is registered under a different model. This fixes the bug where the
-    # NT8 TradeLogExporter writes to V3D_TradeLog.csv regardless of which
-    # account is active, stamping all rows as "V3D" even for V3C/V1A accounts.
+    # is registered under a different model. This remains useful for legacy
+    # chart-level exporters in V1A/V1B/OG, while V3D_TradeLog.csv is skipped
+    # entirely by discover_v3d_trade_logs().
     # -------------------------------------------------------------------------
     if "account" in trades.columns:
         registry_models = trades["account"].map(

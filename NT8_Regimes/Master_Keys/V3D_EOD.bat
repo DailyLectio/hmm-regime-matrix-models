@@ -98,7 +98,7 @@ REM ============================================================
 echo [5/5] Current V3D output file timestamps...
 REM ============================================================
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$files=@( '%V3D_DIR%\NQ_RegimeMatrix_Latest.csv', '%V3D_DIR%\ES_RegimeMatrix_Latest.csv', '%HISTORY_DIR%\NQ_RegimeMatrix_History.csv', '%HISTORY_DIR%\ES_RegimeMatrix_History.csv', '%HISTORY_DIR%\V3C_V3D_Regime_Comparison.csv', '%HISTORY_DIR%\V3C_V3D_Intraday_Comparison.csv', '%HISTORY_DIR%\V3D_Trade_Log_Enriched.csv', '%V3D_DIR%\TradeLog\V3D_TradeLog.csv' ); foreach($f in $files){ if(Test-Path $f){ $i=Get-Item $f; Write-Host ('  OK   ' + $i.Name + '  ' + $i.LastWriteTime) } else { Write-Host ('  MISS ' + $f) } }"
+    "$files=@( '%V3D_DIR%\NQ_RegimeMatrix_Latest.csv', '%V3D_DIR%\ES_RegimeMatrix_Latest.csv', '%HISTORY_DIR%\NQ_RegimeMatrix_History.csv', '%HISTORY_DIR%\ES_RegimeMatrix_History.csv', '%HISTORY_DIR%\V3C_V3D_Regime_Comparison.csv', '%HISTORY_DIR%\V3C_V3D_Intraday_Comparison.csv', '%HISTORY_DIR%\V3D_Trade_Log_Enriched.csv', '%V3D_DIR%\TradeLog\V3D_INTERNAL_TradeLog.csv' ); foreach($f in $files){ if(Test-Path $f){ $i=Get-Item $f; Write-Host ('  OK   ' + $i.Name + '  ' + $i.LastWriteTime) } else { Write-Host ('  MISS ' + $f) } }; $legacy='%V3D_DIR%\TradeLog\V3D_TradeLog.csv'; if(Test-Path $legacy){ $i=Get-Item $legacy; Write-Host ('  LEGACY/SKIP ' + $i.Name + '  ' + $i.LastWriteTime) }"
 
 echo.
 echo ============================================================
