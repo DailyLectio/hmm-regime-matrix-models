@@ -29,7 +29,7 @@ RAW_TRADE_LOGS = [
     BASE_DIR / "V1A" / "TradeLog" / "V1A_TradeLog.csv",
     BASE_DIR / "V1B" / "TradeLog" / "V1B_TradeLog.csv",
     BASE_DIR / "V3C" / "TradeLog" / "V3C_TradeLog.csv",
-    BASE_DIR / "OG"  / "TradeLog" / "OG_TradeLog.csv",
+    BASE_DIR / "V1 OG"  / "TradeLog" / "OG_TradeLog.csv",
 ]
 
 UNIFIED_COLUMNS = [
@@ -118,6 +118,20 @@ def parse_args() -> argparse.Namespace:
         default="35min",
         help="Maximum lookback for nearest-prior regime joins, for example 5min or 35min.",
     )
+    parser.add_argument(
+        "--allow-internal-source",
+        action="store_true",
+        help=(
+            "Allow building AllModels from strategy-owned CSV logs even when a "
+            "same-day NinjaTrader tradeexport.csv is present. Use only for "
+            "diagnostics; NT trade exports are the reconciliation source of truth."
+        ),
+    )
+    parser.add_argument(
+        "--output-suffix",
+        default="",
+        help="Optional suffix added to output filenames, e.g. _STRATEGYLOG_TEST.",
+    )
     return parser.parse_args()
 
 
@@ -147,6 +161,20 @@ def parse_export_date(value: str) -> date | None:
         except ValueError:
             pass
     raise ValueError(f"Unsupported --date value: {value}")
+
+
+def nt_trade_export_has_date(export_date: date | None) -> bool:
+    if export_date is None:
+        return False
+    path = Path.home() / "Downloads" / "tradeexport.csv"
+    if not path.exists():
+        return False
+    try:
+        df = pd.read_csv(path, dtype=str, encoding="utf-8-sig", usecols=["Entry time"])
+    except Exception:
+        return False
+    entry_dates = pd.to_datetime(df["Entry time"], errors="coerce").dt.date
+    return bool(entry_dates.eq(export_date).any())
 
 
 def normalize_account_key(value: Any) -> str:
@@ -266,24 +294,35 @@ def discover_v3d_trade_logs(base_dir: Path) -> list[Path]:
     trade_dir = base_dir / "V3D" / "TradeLog"
     internal = trade_dir / "V3D_INTERNAL_TradeLog.csv"
     legacy = trade_dir / "V3D_TradeLog.csv"
+    paths: list[Path] = []
 
     if has_data_rows(internal):
+        paths.append(internal)
         if has_data_rows(legacy):
             print(
-                "  [V3D source policy] Using V3D_INTERNAL_TradeLog.csv and "
-                "skipping legacy V3D_TradeLog.csv."
+                "  [V3D source policy] Using V3D_INTERNAL_TradeLog.csv plus "
+                "clean SimV3D per-account logs; skipping legacy V3D_TradeLog.csv."
             )
-        return [internal]
 
     account_logs = sorted(trade_dir.glob("SimV3D*_TradeLog.csv")) if trade_dir.exists() else []
     account_logs = [p for p in account_logs if has_data_rows(p)]
     if account_logs:
+        paths.extend(account_logs)
         if has_data_rows(legacy):
             print(
                 "  [V3D source policy] Using clean SimV3D per-account logs and "
                 "skipping legacy V3D_TradeLog.csv."
             )
-        return account_logs
+    if paths:
+        seen: set[Path] = set()
+        unique: list[Path] = []
+        for path in paths:
+            key = path.resolve()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(path)
+        return unique
 
     if has_data_rows(legacy):
         print(
@@ -297,7 +336,7 @@ def discover_raw_trade_logs(base_dir: Path) -> list[Path]:
     paths: list[Path] = []
     for rel in RAW_TRADE_LOGS:
         paths.append(base_dir / rel.relative_to(BASE_DIR))
-    for model in ("V1A", "V1B", "V3C", "OG"):
+    for model in ("V1A", "V1B", "V3C", "V1 OG"):
         trade_dir = base_dir / model / "TradeLog"
         if trade_dir.exists():
             paths.extend(sorted(trade_dir.glob("*_TradeLog.csv")))
@@ -723,11 +762,14 @@ def final_shape(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def write_outputs(base_dir: Path, df: pd.DataFrame, export_date: date | None) -> list[Path]:
+def write_outputs(base_dir: Path, df: pd.DataFrame, export_date: date | None, output_suffix: str = "") -> list[Path]:
     stamp = "ALL" if export_date is None else export_date.strftime("%Y%m%d")
+    suffix = output_suffix.strip()
+    if suffix and not suffix.startswith("_"):
+        suffix = "_" + suffix
     written: list[Path] = []
 
-    unified_path = base_dir / "UNIFIED" / f"AllModels_TradeLog_{stamp}.csv"
+    unified_path = base_dir / "UNIFIED" / f"AllModels_TradeLog_{stamp}{suffix}.csv"
     df.to_csv(unified_path, index=False)
     written.append(unified_path)
 
@@ -735,11 +777,58 @@ def write_outputs(base_dir: Path, df: pd.DataFrame, export_date: date | None) ->
         subset = df[df["model_version"] == model]
         if subset.empty:
             continue
-        model_path = base_dir / model / "History" / f"{model}_TradeLog_{stamp}.csv"
+        model_dir = "V1 OG" if model == "OG" and (base_dir / "V1 OG").exists() else model
+        model_path = base_dir / model_dir / "History" / f"{model}_TradeLog_{stamp}{suffix}.csv"
         subset.to_csv(model_path, index=False)
         written.append(model_path)
 
-    report_path = base_dir / "UNIFIED" / f"DataQuality_Report_{stamp}.txt"
+    model_summary_path = base_dir / "UNIFIED" / f"StrategyLog_ModelSummary_{stamp}{suffix}.csv"
+    model_summary = (
+        df.groupby("model_version", dropna=False)
+        .agg(
+            trades=("net_pnl", "count"),
+            accounts=("account", lambda s: s.fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
+            net_pnl=("net_pnl", "sum"),
+            win_rate=("win_loss", lambda s: (s.fillna("").astype(str).str.upper().eq("WIN").mean() * 100).round(2)),
+        )
+        .reset_index()
+    )
+    model_summary.to_csv(model_summary_path, index=False)
+    written.append(model_summary_path)
+
+    account_summary_path = base_dir / "UNIFIED" / f"StrategyLog_AccountSummary_{stamp}{suffix}.csv"
+    account_summary = (
+        df.groupby(["model_version", "account"], dropna=False)
+        .agg(
+            trades=("net_pnl", "count"),
+            net_pnl=("net_pnl", "sum"),
+            win_rate=("win_loss", lambda s: (s.fillna("").astype(str).str.upper().eq("WIN").mean() * 100).round(2)),
+            first_entry=("entry_time", "min"),
+            last_exit=("exit_time", "max"),
+        )
+        .reset_index()
+        .sort_values(["model_version", "account"], na_position="last")
+    )
+    account_summary.to_csv(account_summary_path, index=False)
+    written.append(account_summary_path)
+
+    source_summary_path = base_dir / "UNIFIED" / f"StrategyLog_SourceSummary_{stamp}{suffix}.csv"
+    source_summary = (
+        df.groupby("source_file", dropna=False)
+        .agg(
+            trades=("net_pnl", "count"),
+            accounts=("account", lambda s: s.fillna("").astype(str).str.strip().replace("", pd.NA).dropna().nunique()),
+            net_pnl=("net_pnl", "sum"),
+            first_entry=("entry_time", "min"),
+            last_exit=("exit_time", "max"),
+        )
+        .reset_index()
+        .sort_values("source_file", na_position="last")
+    )
+    source_summary.to_csv(source_summary_path, index=False)
+    written.append(source_summary_path)
+
+    report_path = base_dir / "UNIFIED" / f"DataQuality_Report_{stamp}{suffix}.txt"
     counts = df["data_quality_flag"].value_counts(dropna=False)
     with report_path.open("w", encoding="utf-8") as handle:
         handle.write(f"Data Quality Report {stamp}\n")
@@ -772,6 +861,17 @@ def main() -> int:
     base_dir = Path(args.base_dir)
     export_date = parse_export_date(args.date)
     ensure_taxonomy(base_dir)
+
+    if not args.allow_internal_source and nt_trade_export_has_date(export_date):
+        stamp = export_date.strftime("%Y-%m-%d") if export_date is not None else "ALL"
+        print(
+            "Refusing to overwrite AllModels from internal strategy logs because "
+            f"a NinjaTrader tradeexport.csv containing {stamp} is present.\n"
+            "Run Scripts\\nt_trade_export_reconcile.py with --replace-unified "
+            "so the NT execution export remains the source of truth. Pass "
+            "--allow-internal-source only for diagnostics."
+        )
+        return 2
 
     registry = load_registry(base_dir / REGISTRY_PATH.name)
     raw_paths = discover_raw_trade_logs(base_dir)
@@ -849,7 +949,7 @@ def main() -> int:
     trades = enrich_with_broad_agree(base_dir, trades)
     trades = derive_columns(trades)
     shaped = final_shape(trades)
-    written = write_outputs(base_dir, shaped, export_date)
+    written = write_outputs(base_dir, shaped, export_date, args.output_suffix)
     print("Wrote:")
     for path in written:
         print(f"  {path}")

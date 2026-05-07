@@ -1,0 +1,2 @@
+﻿account,accounts_realized_pnl,nt_trade_export_rows,present_in_accounts,present_in_nt_trade_export,present_in_v3d_strategy_logs,coverage_issue
+SimV3D-NQ-3B,680.0,2,True,True,False,MISSING_FROM_V3D_STRATEGY_LOG

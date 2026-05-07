@@ -1,0 +1,8 @@
+﻿account,accounts_realized_pnl,nt_trade_export_rows,nt_trade_export_net_pnl,strategy_log_rows,strategy_log_unique_rows,strategy_log_net_pnl,strategy_log_files,coverage_issue
+SimMomo1,-1072.96,15,-305.4000000000002,0,0,0.0,,MISSING_FROM_V3C_STRATEGY_LOG
+SimMomo2,-775.0,1,-775.0,0,0,0.0,,MISSING_FROM_V3C_STRATEGY_LOG
+SimV3C-NQ-2A,-15.0,4,-15.0,4,4,-15.0,SimV3C_NQ_2A_TradeLog.csv,OK
+SimV3C-NQ-2B,-280.0,3,-280.0,3,3,-280.0,SimV3C_NQ_2B_TradeLog.csv,OK
+SimV3C-NQ-2C,-1165.0,2,-1165.0,2,2,-1165.0,SimV3C_NQ_2C_TradeLog.csv,OK
+SimV3C-NQ-4A,-220.0,1,-220.0,1,1,-220.0,SimV3C_NQ_4A_TradeLog.csv,OK
+SimV3C-NQ-5A,-1125.0,11,-1125.0,6,3,-590.0,SimV3C_NQ_5A_TradeLog.csv,ROW_COUNT_MISMATCH

@@ -1,0 +1,14 @@
+﻿model_version,account,accounts_realized_pnl,Filled Buys,Filled Sells
+V3D,SimV3D-NQ-3B,680.0,0,0
+V3C,SimV3C-NQ-5A,-1125.0,0,0
+V3C,SimV3C-NQ-4A,-220.0,0,0
+V3C,SimV3C-NQ-2C,-1165.0,0,0
+V3C,SimV3C-NQ-2B,-280.0,0,0
+V3C,SimV3C-NQ-2A,-15.0,0,0
+V1B,SimV1A Kalman Fader 3,-475.0,4,4
+V1A,SimV1A- Kalman Fader 1,-390.0,0,0
+V1A,SimV1A - Kalman Fader 2,-665.0,2,2
+OG,SimPine1,90.64,0,0
+V3C,SimMomo2,-775.0,0,0
+V3C,SimMomo1,-1072.96,4,4
+OG,SimADX Pine,235.0,0,0
